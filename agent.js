@@ -1,0 +1,118 @@
+import OpenAI from "openai";
+import { buildSystemPrompt } from "./prompt.js";
+import { executeTool } from "./tools/executor.js";
+import { tools } from "./tools/definitions.js";
+import { getWalletBalances } from "./tools/wallet.js";
+import { getMyPositions } from "./tools/dlmm.js";
+import { log } from "./logger.js";
+import { config } from "./config.js";
+import { getStateSummary } from "./state.js";
+import { getLessonsForPrompt, getPerformanceSummary } from "./lessons.js";
+
+// OpenRouter uses the OpenAI-compatible API
+const client = new OpenAI({
+  baseURL: "https://openrouter.ai/api/v1",
+  apiKey: process.env.OPENROUTER_API_KEY,
+});
+
+const DEFAULT_MODEL = process.env.LLM_MODEL || "openrouter/healer-alpha";
+
+/**
+ * Core ReAct agent loop.
+ *
+ * @param {string} goal - The task description for the agent
+ * @param {number} maxSteps - Safety limit on iterations (default 20)
+ * @returns {string} - The agent's final text response
+ */
+export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHistory = [], agentType = "GENERAL", model = null) {
+  // Build dynamic system prompt with current portfolio state
+  const [portfolio, positions] = await Promise.all([getWalletBalances(), getMyPositions()]);
+  const stateSummary = getStateSummary();
+  const lessons = getLessonsForPrompt();
+  const perfSummary = getPerformanceSummary();
+  const systemPrompt = buildSystemPrompt(agentType, portfolio, positions, stateSummary, lessons, perfSummary);
+
+  const messages = [
+    { role: "system", content: systemPrompt },
+    ...sessionHistory,          // inject prior conversation turns
+    { role: "user", content: goal },
+  ];
+
+  for (let step = 0; step < maxSteps; step++) {
+    log("agent", `Step ${step + 1}/${maxSteps}`);
+
+    try {
+      const activeModel = model || DEFAULT_MODEL;
+      const response = await client.chat.completions.create({
+        model: activeModel,
+        messages,
+        tools,
+        tool_choice: "auto",
+        temperature: config.llm.temperature,
+        max_tokens: config.llm.maxTokens,
+      });
+
+      if (!response.choices?.length) {
+        log("error", `Bad API response: ${JSON.stringify(response).slice(0, 200)}`);
+        throw new Error(`API returned no choices: ${response.error?.message || JSON.stringify(response)}`);
+      }
+      const msg = response.choices[0].message;
+      messages.push(msg);
+
+      // If the model didn't call any tools, it's done
+      if (!msg.tool_calls || msg.tool_calls.length === 0) {
+        // Hermes sometimes returns null content — pop the empty message and retry once
+        if (!msg.content) {
+          messages.pop(); // remove the empty assistant message
+          log("agent", "Empty response, retrying...");
+          continue;
+        }
+        log("agent", "Final answer reached");
+        log("agent", msg.content);
+        return { content: msg.content, userMessage: goal };
+      }
+
+      // Execute each tool call in parallel
+      const toolResults = await Promise.all(msg.tool_calls.map(async (toolCall) => {
+        const functionName = toolCall.function.name;
+        let functionArgs;
+
+        try {
+          functionArgs = JSON.parse(toolCall.function.arguments);
+        } catch (parseError) {
+          log("error", `Failed to parse args for ${functionName}: ${parseError.message}`);
+          functionArgs = {};
+        }
+
+        const result = await executeTool(functionName, functionArgs);
+
+        return {
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(result),
+        };
+      }));
+
+      messages.push(...toolResults);
+    } catch (error) {
+      log("error", `Agent loop error at step ${step}: ${error.message}`);
+
+      // If it's a rate limit, wait and retry
+      if (error.status === 429) {
+        log("agent", "Rate limited, waiting 30s...");
+        await sleep(30000);
+        continue;
+      }
+
+      // For other errors, break the loop
+      throw error;
+    }
+  }
+
+  log("agent", "Max steps reached without final answer");
+  return { content: "Max steps reached. Review logs for partial progress.", userMessage: goal };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

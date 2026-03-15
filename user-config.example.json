@@ -1,0 +1,27 @@
+{
+  "rpcUrl": "https://pump.helius-rpc.com",
+  "walletKey": "YOUR_BASE58_PRIVATE_KEY",
+  "dryRun": true,
+
+  "deployAmountSol": 0.5,
+  "maxPositions": 3,
+  "minSolToOpen": 0.07,
+
+  "managementIntervalMin": 10,
+  "screeningIntervalMin": 30,
+
+  "managementModel": "openrouter/healer-alpha",
+  "screeningModel": "openrouter/hunter-alpha",
+  "generalModel": "openrouter/healer-alpha",
+
+  "minFeeActiveTvlRatio": 0.05,
+  "minTvl": 10000,
+  "maxTvl": 150000,
+  "minOrganic": 65,
+  "minHolders": 500,
+  "timeframe": "5m",
+  "category": "trending",
+
+  "takeProfitFeePct": 5,
+  "outOfRangeWaitMinutes": 30
+}
