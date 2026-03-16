@@ -387,6 +387,69 @@ Always provide a reason. This is logged as a lesson and visible in future cycles
     }
   },
 
+  // ═══════════════════════════════════════════
+  //  SMART WALLET TOOLS
+  // ═══════════════════════════════════════════
+  {
+    type: "function",
+    function: {
+      name: "add_smart_wallet",
+      description: `Add a wallet to the smart wallet tracker.
+Use when the user says "add smart wallet", "track this wallet", "add to smart wallets", etc.
+Tracked wallets are used to check if high-confidence LPers are in a pool before deploying.`,
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Label for this wallet (e.g. 'alpha-1', 'whale-sol')" },
+          address: { type: "string", description: "Solana wallet address (base58)" },
+          category: { type: "string", enum: ["alpha", "smart", "fast", "multi"], description: "Wallet type (default: alpha)" }
+        },
+        required: ["name", "address"]
+      }
+    }
+  },
+
+  {
+    type: "function",
+    function: {
+      name: "remove_smart_wallet",
+      description: "Remove a wallet from the smart wallet tracker.",
+      parameters: {
+        type: "object",
+        properties: {
+          address: { type: "string", description: "Wallet address to remove" }
+        },
+        required: ["address"]
+      }
+    }
+  },
+
+  {
+    type: "function",
+    function: {
+      name: "list_smart_wallets",
+      description: "List all currently tracked smart wallets.",
+      parameters: { type: "object", properties: {} }
+    }
+  },
+
+  {
+    type: "function",
+    function: {
+      name: "check_smart_wallets_on_pool",
+      description: `Check if any tracked smart wallets have an active position in a given pool.
+Use this before deploying to gauge confidence — if smart wallets are in the pool it's a strong signal.
+If no smart wallets are present, rely on fundamentals (fees, volume, organic score) as usual.`,
+      parameters: {
+        type: "object",
+        properties: {
+          pool_address: { type: "string", description: "Pool address to check" }
+        },
+        required: ["pool_address"]
+      }
+    }
+  },
+
   {
     type: "function",
     function: {

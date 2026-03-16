@@ -133,8 +133,9 @@ SCREENING CYCLE — DEPLOY ONLY
 1. get_my_positions first. Only proceed if positions < ${config.risk.maxPositions}.
 2. get_wallet_balance. Proceed if SOL >= ${config.management.minSolToOpen}.
 3. get_top_candidates, pick the best one, and call study_top_lpers.
-4. If the pool is high-quality: get_active_bin and deploy_position.
-5. Report result and reasoning.
+4. Call check_smart_wallets_on_pool for the chosen pool. Smart wallet presence = strong confidence boost. No presence = neutral, rely on fundamentals.
+5. If the pool is high-quality: get_active_bin and deploy_position.
+6. Report result and reasoning including smart wallet signal.
       `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel);
       screenReport = content;
     } catch (error) {

@@ -11,6 +11,7 @@ user-config.json
 # Runtime state (position tracking, lessons — user-specific)
 state.json
 lessons.json
+smart-wallets.json
 
 # Logs
 logs/
