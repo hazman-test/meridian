@@ -48,6 +48,8 @@ export const config = {
     takeProfitFeePct:      u.takeProfitFeePct ?? 5,
     minSolToOpen:          u.minSolToOpen ?? 0.55,
     deployAmountSol:       u.deployAmountSol ?? 0.5,
+    gasReserve:            u.gasReserve        ?? 0.2,   // always keep this much SOL for gas
+    positionSizePct:       u.positionSizePct   ?? 0.35,  // % of deployable capital per position
   },
 
   // ─── Strategy Mapping ───────────────────
@@ -80,6 +82,29 @@ export const config = {
     USDT: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
   },
 };
+
+/**
+ * Compute the optimal deploy amount for a given wallet balance.
+ * Scales position size with wallet growth (compounding).
+ *
+ * Formula: clamp(deployable × positionSizePct, floor=deployAmountSol, ceil=maxDeployAmount)
+ *
+ * Examples (defaults: gasReserve=0.2, positionSizePct=0.35, floor=0.5):
+ *   0.8 SOL wallet → 0.6 SOL deploy  (floor)
+ *   2.0 SOL wallet → 0.63 SOL deploy
+ *   3.0 SOL wallet → 0.98 SOL deploy
+ *   4.0 SOL wallet → 1.33 SOL deploy
+ */
+export function computeDeployAmount(walletSol) {
+  const reserve  = config.management.gasReserve      ?? 0.2;
+  const pct      = config.management.positionSizePct ?? 0.35;
+  const floor    = config.management.deployAmountSol;
+  const ceil     = config.risk.maxDeployAmount;
+  const deployable = Math.max(0, walletSol - reserve);
+  const dynamic    = deployable * pct;
+  const result     = Math.min(ceil, Math.max(floor, dynamic));
+  return parseFloat(result.toFixed(2));
+}
 
 /**
  * Reload user-config.json and apply updated screening thresholds to the

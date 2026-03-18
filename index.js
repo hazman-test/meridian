@@ -6,7 +6,7 @@ import { log } from "./logger.js";
 import { getMyPositions } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
-import { config, reloadScreeningThresholds } from "./config.js";
+import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
 import { registerCronRestarter } from "./tools/executor.js";
 import { startPolling, stopPolling, sendMessage, sendHTML, notifyOutOfRange, isEnabled as telegramEnabled } from "./telegram.js";
@@ -164,6 +164,11 @@ REPORT FORMAT (Strictly follow this for each position):
     log("cron", `Starting screening cycle [model: ${config.llm.screeningModel}]`);
     let screenReport = null;
     try {
+      // Compute dynamic deploy amount based on current wallet (compounding)
+      const currentBalance = await getWalletBalances().catch(() => null);
+      const deployAmount = currentBalance ? computeDeployAmount(currentBalance.sol) : config.management.deployAmountSol;
+      log("cron", `Computed deploy amount: ${deployAmount} SOL (wallet: ${currentBalance?.sol ?? "?"} SOL)`);
+
       const { content } = await agentLoop(`
 SCREENING CYCLE — DEPLOY ONLY
 
@@ -179,8 +184,10 @@ SCREENING CYCLE — DEPLOY ONLY
      * DEPLOY if: distribution is healthy AND narrative has a specific origin (real event, viral moment, named entity, active community)
      * Bundlers 5–15% are normal and not a reason to skip on their own — weigh against overall token health
      * Report what you found and why you decided to deploy or skip.
-6. If the pool passes all checks: get_active_bin and deploy_position.
-7. Report result and reasoning including smart wallet signal, holder check outcome, and interval set.
+6. If the pool passes all checks: get_active_bin and deploy_position with ${deployAmount} SOL.
+   COMPOUNDING: This amount is scaled from your current wallet (${currentBalance?.sol ?? "?"} SOL).
+   As profits accumulate and wallet grows, deploy amount increases automatically. Do NOT override with a smaller amount.
+7. Report result and reasoning including smart wallet signal, holder check outcome, deploy amount used, and interval set.
       `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel);
       screenReport = content;
     } catch (error) {

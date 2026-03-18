@@ -139,6 +139,8 @@ const toolMap = {
       takeProfitFeePct: ["management", "takeProfitFeePct"],
       minSolToOpen: ["management", "minSolToOpen"],
       deployAmountSol: ["management", "deployAmountSol"],
+      gasReserve: ["management", "gasReserve"],
+      positionSizePct: ["management", "positionSizePct"],
       // risk
       maxPositions: ["risk", "maxPositions"],
       maxDeployAmount: ["risk", "maxDeployAmount"],

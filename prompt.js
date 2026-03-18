@@ -86,6 +86,7 @@ Your goal: Find high-yield, high-volume pools and DEPLOY capital.
 5. DEPLOY: get_active_bin then deploy_position.
    - HARD RULE: Minimum 0.1 SOL absolute floor (prefer 0.5+).
    - HARD RULE: Bin steps must be [80-125].
+   - COMPOUNDING: Deploy amount is computed from wallet size — larger wallet = larger position. Use the amount provided in the cycle goal, do NOT default to a smaller fixed number.
    - Focus on one high-conviction deployment per cycle.
 `;
   } else if (agentType === "MANAGER") {
