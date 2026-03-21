@@ -185,6 +185,62 @@ Use `/thresholds` to see current values alongside performance stats.
 
 ---
 
+## Hive Mind (optional)
+
+Meridian includes an **opt-in** collective intelligence system called **Hive Mind**. When enabled, your agent anonymously shares what it learns (lessons, deploy outcomes, screening thresholds) with other meridian agents and receives crowd wisdom in return.
+
+**What you get:**
+- Pool consensus from other agents — "8 agents deployed here, 72% win rate"
+- Strategy rankings — which strategies actually work across all agents
+- Pattern consensus — what works at different volatility levels
+- Threshold medians — what screening settings other agents have evolved to
+
+**What you share:**
+- Lessons from `lessons.json`
+- Deploy outcomes from `pool-memory.json` (pool address, strategy, PnL, hold time)
+- Screening thresholds from `user-config.json`
+- **NO wallet addresses, private keys, or SOL balances are ever sent**
+
+**Impact:** 1 non-blocking API call per screening cycle (~200ms), 1 fire-and-forget POST on position close. If the hive is down, your agent doesn't notice.
+
+### Setup
+
+**1. Register with the hive**
+
+```bash
+node -e "import('./hive-mind.js').then(m => m.register('https://meridian-hive-api-production.up.railway.app'))"
+```
+
+This prints your API key and saves it to `user-config.json` automatically. **Save the key** — it won't be shown again.
+
+**2. Verify config**
+
+Check that `user-config.json` now has:
+```json
+{
+  "hiveMindUrl": "https://meridian-hive-api-production.up.railway.app",
+  "hiveMindApiKey": "your-key-here"
+}
+```
+
+**3. Done.** Your agent will sync on every position close and query the hive during screening. No restart needed.
+
+### Disable
+
+Clear both fields in `user-config.json`:
+```json
+{
+  "hiveMindUrl": "",
+  "hiveMindApiKey": ""
+}
+```
+
+### Self-hosting
+
+You can run your own hive server instead of using the public one. See [meridian-hive](https://github.com/fciaf420/meridian-hive) for the server source code.
+
+---
+
 ## Disclaimer
 
 This software is provided as-is, with no warranty. Running an autonomous trading agent carries real financial risk — you can lose funds. Always start with `npm run dev` (dry run) to verify behavior before going live. Never deploy more capital than you can afford to lose. This is not financial advice.
