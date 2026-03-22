@@ -57,6 +57,7 @@ function buildPrompt() {
 let _cronTasks = [];
 let _managementBusy = false; // prevents overlapping management cycles
 let _screeningBusy = false;  // prevents overlapping screening cycles
+let _screeningLastTriggered = 0; // epoch ms — prevents management from spamming screening
 
 async function runBriefing() {
   log("cron", "Starting morning briefing");
@@ -128,8 +129,10 @@ export function startCronJobs() {
         if (cronStarted) startCronJobs();
       }
 
-      // Also trigger screening if under max positions — runs in background, doesn't block management
-      if (positions.length < config.risk.maxPositions) {
+      // Also trigger screening if under max positions — cooldown 5min to avoid spamming
+      const screeningCooldownMs = 5 * 60 * 1000;
+      if (positions.length < config.risk.maxPositions && Date.now() - _screeningLastTriggered > screeningCooldownMs) {
+        _screeningLastTriggered = Date.now();
         log("cron", `Positions (${positions.length}/${config.risk.maxPositions}) — triggering screening in background`);
         runScreeningCycle().catch((e) => log("cron_error", `Triggered screening failed: ${e.message}`));
       }

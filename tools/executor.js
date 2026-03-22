@@ -348,8 +348,8 @@ async function runSafetyChecks(name, args) {
         };
       }
 
-      // Check position count limit + duplicate pool guard
-      const positions = await getMyPositions();
+      // Check position count limit + duplicate pool guard — force fresh scan to avoid stale cache
+      const positions = await getMyPositions({ force: true });
       if (positions.total_positions >= config.risk.maxPositions) {
         return {
           pass: false,
