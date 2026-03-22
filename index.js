@@ -292,6 +292,14 @@ After all positions, add one summary line:
           const launchpad = ti?.launchpad ?? null;
           const feesSol   = ti?.global_fees_sol ?? h?.global_fees_sol ?? "?";
 
+          // Hard filter: skip blocked launchpads before even showing to LLM
+          if (launchpad && config.screening.blockedLaunchpads.length > 0) {
+            if (config.screening.blockedLaunchpads.includes(launchpad)) {
+              log("screening", `Skipping ${pool.name} — blocked launchpad: ${launchpad}`);
+              continue;
+            }
+          }
+
           // Build compact block
           const lines = [
             `POOL: ${pool.name} (${pool.pool})`,
