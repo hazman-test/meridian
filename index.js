@@ -306,9 +306,8 @@ REPORT FORMAT (one per position):
         }
       } catch { /* hive is best-effort */ }
 
-      // Phase 1: pick the best candidate — return pool address + reasoning only
-      const { content: pickContent } = await agentLoop(`
-SCREENING CYCLE — SELECTION ONLY (do NOT deploy yet)
+      const { content } = await agentLoop(`
+SCREENING CYCLE
 ${strategyBlock}
 Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | Deploy: ${deployAmount} SOL
 ${candidateContext}
@@ -319,27 +318,12 @@ DECISION RULES:
 - Bundlers 5–15% are normal, not a skip reason on their own
 - Smart wallets present → strong confidence boost
 
-Evaluate each candidate and output ONLY this:
-SELECTED: <pool_address> | <pool_name> | bins_below=<round(35 + (volatility/5)*34) clamped 35-69>
-or: NO_DEPLOY: <reason>
-
-No other text.
-      `, 5, [], "SCREENER", config.llm.screeningModel, 2048);
-
-      // Phase 2: parse pick and deploy in a focused call
-      const selectedMatch = pickContent.match(/SELECTED:\s*(\S+)\s*\|\s*([^|]+)\|\s*bins_below=(\d+)/);
-      if (!selectedMatch) {
-        const noDeployMatch = pickContent.match(/NO_DEPLOY:\s*(.+)/);
-        screenReport = `No deploy this cycle — ${noDeployMatch?.[1]?.trim() ?? pickContent.trim()}`;
-      } else {
-        const [, poolAddr, poolName, binsStr] = selectedMatch;
-        const binsBelow = Math.min(69, Math.max(35, parseInt(binsStr)));
-        const { content: deployContent } = await agentLoop(
-          `Deploy ${deployAmount} SOL into pool ${poolAddr.trim()} (${poolName.trim()}). bins_below=${binsBelow}, bins_above=0. Call deploy_position now. Report the tx hash when done.`,
-          10, [], "SCREENER", config.llm.screeningModel, 2048
-        );
-        screenReport = `${pickContent.trim()}\n\n${deployContent.trim()}`;
-      }
+STEPS:
+1. Pick the best candidate. If none pass, report why and stop.
+2. Call deploy_position with ${deployAmount} SOL. Set bins_below = round(35 + (volatility/5)*34) clamped to [35,69].
+3. Report result.
+      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048);
+      screenReport = content;
     } catch (error) {
       log("cron_error", `Screening cycle failed: ${error.message}`);
       screenReport = `Screening cycle failed: ${error.message}`;
