@@ -272,19 +272,18 @@ REPORT FORMAT (one per position):
           const ti   = tokenInfo.status === "fulfilled" ? tokenInfo.value?.results?.[0] : null;
           const mem  = poolMemory.value;
 
-          const momentum = ti?.stats_1h
-            ? `1h: price${ti.stats_1h.price_change >= 0 ? "+" : ""}${ti.stats_1h.price_change}%, buyers=${ti.stats_1h.buyers}, net_buyers=${ti.stats_1h.net_buyers}`
-            : null;
+          const priceChange = ti?.stats_1h?.price_change;
+          const netBuyers = ti?.stats_1h?.net_buyers;
 
           // Build compact block
           const lines = [
             `POOL: ${pool.name} (${pool.pool})`,
-            `  metrics: bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}`,
-            `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map(w => w.name).join(", ")})` : ""}`,
-            h ? `  holders: top_10_pct=${h.top_10_real_holders_pct ?? "?"}%, bundlers_pct=${h.bundlers_pct_in_top_100 ?? "?"}%, global_fees_sol=${h.global_fees_sol ?? "?"}` : `  holders: fetch failed`,
-            momentum ? `  momentum: ${momentum}` : null,
-            n?.narrative ? `  narrative: ${n.narrative.slice(0, 500)}` : `  narrative: none`,
-            mem ? `  memory: ${mem}` : null,
+            `  metrics: bin_step=${pool.bin_step}, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, vol=${pool.volatility}, organic=${pool.organic_score}, mcap=$${pool.mcap}`,
+            sw?.in_pool?.length ? `  smart_wallets: ${sw.in_pool.map(w => w.name).join(", ")} ✓` : null,
+            h ? `  holders: top10=${h.top_10_real_holders_pct ?? "?"}%, bundlers=${h.bundlers_pct_in_top_100 ?? "?"}%, fees=${h.global_fees_sol ?? "?"}SOL` : null,
+            priceChange != null ? `  1h: price${priceChange >= 0 ? "+" : ""}${priceChange}%, net_buyers=${netBuyers ?? "?"}` : null,
+            n?.narrative ? `  narrative: ${n.narrative.slice(0, 200)}` : null,
+            mem ? `  memory: ${mem.slice(0, 150)}` : null,
           ].filter(Boolean);
 
           candidateBlocks.push(lines.join("\n"));
