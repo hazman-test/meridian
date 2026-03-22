@@ -3,7 +3,7 @@ import cron from "node-cron";
 import readline from "readline";
 import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
-import { getMyPositions, getPositionPnl } from "./tools/dlmm.js";
+import { getMyPositions, getPositionPnl, closePosition } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
@@ -11,7 +11,7 @@ import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
 import { registerCronRestarter } from "./tools/executor.js";
 import { startPolling, stopPolling, sendMessage, sendHTML, notifyOutOfRange, isEnabled as telegramEnabled } from "./telegram.js";
 import { generateBriefing } from "./briefing.js";
-import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition } from "./state.js";
+import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, setPositionInstruction } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
 import { recordPositionSnapshot, recallForPool } from "./pool-memory.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
@@ -176,7 +176,11 @@ MANAGEMENT CYCLE — ${positions.length} position(s)
 PRE-LOADED POSITION DATA (no fetching needed):
 ${positionBlocks}${hivePatterns}
 
-HARD CLOSE RULES — apply in order, first match wins:
+SPECIAL INSTRUCTIONS — check before close rules:
+- instruction = "flip bid-ask" AND active_bin <= lower_bin → FLIP: call remove_liquidity, then add_liquidity with all tokenX balance, bins_above=bins_below (same width), bins_below=0, strategy=bid_ask. Clear instruction after with set_position_note(null). Use general model reasoning.
+- instruction = "flip bid-ask" AND condition NOT met → HOLD, skip all close rules
+
+HARD CLOSE RULES — apply in order, first match wins (skip if instruction handled above):
 1. instruction set AND condition met → CLOSE (highest priority)
 2. instruction set AND condition NOT met → HOLD, skip remaining rules
 3. pnl_pct <= ${config.management.emergencyPriceDropPct}% → CLOSE (stop loss)
@@ -517,6 +521,96 @@ if (isTTY) {
       try {
         const briefing = await generateBriefing();
         await sendHTML(briefing);
+      } catch (e) {
+        await sendMessage(`Error: ${e.message}`).catch(() => {});
+      }
+      return;
+    }
+
+    if (text === "/positions") {
+      try {
+        const { positions, total_positions } = await getMyPositions({ force: true });
+        if (total_positions === 0) { await sendMessage("No open positions."); return; }
+        const lines = positions.map((p, i) => {
+          const pnl = p.pnl_usd >= 0 ? `+$${p.pnl_usd}` : `-$${Math.abs(p.pnl_usd)}`;
+          const age = p.age_minutes != null ? `${p.age_minutes}m` : "?";
+          const oor = !p.in_range ? " ⚠️OOR" : "";
+          return `${i + 1}. ${p.pair} | $${p.total_value_usd} | PnL: ${pnl} | fees: $${p.unclaimed_fees_usd} | ${age}${oor}`;
+        });
+        await sendMessage(`📊 Open Positions (${total_positions}):\n\n${lines.join("\n")}\n\n/close <n> to close | /set <n> <note> to set instruction`);
+      } catch (e) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
+      return;
+    }
+
+    const closeMatch = text.match(/^\/close\s+(\d+)$/i);
+    if (closeMatch) {
+      try {
+        const idx = parseInt(closeMatch[1]) - 1;
+        const { positions } = await getMyPositions({ force: true });
+        if (idx < 0 || idx >= positions.length) { await sendMessage(`Invalid number. Use /positions first.`); return; }
+        const pos = positions[idx];
+        await sendMessage(`Closing ${pos.pair}...`);
+        const result = await closePosition({ position_address: pos.position });
+        if (result.success) {
+          await sendMessage(`✅ Closed ${pos.pair}\nPnL: $${result.pnl_usd ?? "?"} | txs: ${result.txs?.join(", ")}`);
+        } else {
+          await sendMessage(`❌ Close failed: ${JSON.stringify(result)}`);
+        }
+      } catch (e) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
+      return;
+    }
+
+    const setMatch = text.match(/^\/set\s+(\d+)\s+(.+)$/i);
+    if (setMatch) {
+      try {
+        const idx = parseInt(setMatch[1]) - 1;
+        const note = setMatch[2].trim();
+        const { positions } = await getMyPositions({ force: true });
+        if (idx < 0 || idx >= positions.length) { await sendMessage(`Invalid number. Use /positions first.`); return; }
+        const pos = positions[idx];
+        setPositionInstruction(pos.position, note);
+        await sendMessage(`✅ Note set for ${pos.pair}:\n"${note}"`);
+      } catch (e) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
+      return;
+    }
+
+    if (text === "/positions") {
+      try {
+        const { positions, total_positions } = await getMyPositions({ force: true });
+        if (total_positions === 0) {
+          await sendMessage("No open positions.");
+          return;
+        }
+        const lines = positions.map((p, i) => {
+          const pnl = p.pnl_usd >= 0 ? `+$${p.pnl_usd}` : `-$${Math.abs(p.pnl_usd)}`;
+          const age = p.age_minutes != null ? `${p.age_minutes}m` : "?";
+          const oor = !p.in_range ? " ⚠️OOR" : "";
+          return `${i + 1}. ${p.pair} | $${p.total_value_usd} | PnL: ${pnl} | fees: $${p.unclaimed_fees_usd} | ${age}${oor}`;
+        });
+        await sendMessage(`📊 Open Positions (${total_positions}):\n\n${lines.join("\n")}\n\nUse /close <n> to close a position.`);
+      } catch (e) {
+        await sendMessage(`Error: ${e.message}`).catch(() => {});
+      }
+      return;
+    }
+
+    const closeMatch = text.match(/^\/close\s+(\d+)$/i);
+    if (closeMatch) {
+      try {
+        const idx = parseInt(closeMatch[1]) - 1;
+        const { positions } = await getMyPositions({ force: true });
+        if (idx < 0 || idx >= positions.length) {
+          await sendMessage(`Invalid position number. Use /positions to see the list.`);
+          return;
+        }
+        const pos = positions[idx];
+        await sendMessage(`Closing ${pos.pair}...`);
+        const result = await closePosition({ position_address: pos.position });
+        if (result.success) {
+          await sendMessage(`✅ Closed ${pos.pair}\nPnL: $${result.pnl_usd ?? "?"} | txs: ${result.txs?.join(", ")}`);
+        } else {
+          await sendMessage(`❌ Close failed: ${JSON.stringify(result)}`);
+        }
       } catch (e) {
         await sendMessage(`Error: ${e.message}`).catch(() => {});
       }

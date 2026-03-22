@@ -187,6 +187,47 @@ WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
   },
 
   // ═══════════════════════════════════════════
+  //  LIQUIDITY MANAGEMENT TOOLS
+  // ═══════════════════════════════════════════
+  {
+    type: "function",
+    function: {
+      name: "remove_liquidity",
+      description: `Remove all liquidity from a position WITHOUT closing the position account.
+Use this for the flip bid-ask strategy: withdraw SOL-side liquidity, then re-add as tokenX-only.
+Does NOT close the position — the account stays open for re-use.`,
+      parameters: {
+        type: "object",
+        properties: {
+          position_address: { type: "string", description: "The position public key to remove liquidity from" }
+        },
+        required: ["position_address"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_liquidity",
+      description: `Add liquidity to an existing position account.
+Use this after remove_liquidity for the flip bid-ask strategy: re-add tokenX only with bins_above set.
+For tokenX-only (sell side): set amount_x, amount_y=0, bins_below=0, bins_above=<N>.`,
+      parameters: {
+        type: "object",
+        properties: {
+          position_address: { type: "string", description: "The existing position public key" },
+          amount_x: { type: "number", description: "Amount of base token to deposit" },
+          amount_y: { type: "number", description: "Amount of quote token (SOL) to deposit" },
+          bins_below: { type: "number", description: "Bins below active bin (0 for tokenX-only sell side)" },
+          bins_above: { type: "number", description: "Bins above active bin (set this for tokenX-only sell side)" },
+          strategy: { type: "string", enum: ["bid_ask", "spot"], description: "Strategy type" }
+        },
+        required: ["position_address"]
+      }
+    }
+  },
+
+  // ═══════════════════════════════════════════
   //  POSITION MANAGEMENT TOOLS
   // ═══════════════════════════════════════════
   {

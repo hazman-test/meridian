@@ -7,6 +7,8 @@ import {
   getPositionPnl,
   claimFees,
   closePosition,
+  removeLiquidity,
+  addLiquidity,
   searchPools,
 } from "./dlmm.js";
 import { getWalletBalances, swapToken } from "./wallet.js";
@@ -53,6 +55,8 @@ const toolMap = {
   check_smart_wallets_on_pool: checkSmartWalletsOnPool,
   claim_fees: claimFees,
   close_position: closePosition,
+  remove_liquidity: removeLiquidity,
+  add_liquidity: addLiquidity,
   get_wallet_balance: getWalletBalances,
   swap_token: swapToken,
   get_top_lpers: studyTopLPers,

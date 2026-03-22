@@ -673,6 +673,108 @@ export async function closePosition({ position_address }) {
   }
 }
 
+// ─── Remove Liquidity (without closing position account) ──────
+export async function removeLiquidity({ position_address }) {
+  position_address = normalizeMint(position_address);
+  if (process.env.DRY_RUN === "true") {
+    return { dry_run: true, would_remove: position_address, message: "DRY RUN — no transaction sent" };
+  }
+  try {
+    log("remove_liquidity", `Removing liquidity from position: ${position_address}`);
+    const wallet = getWallet();
+    const poolAddress = await lookupPoolForPosition(position_address, wallet.publicKey.toString());
+    poolCache.delete(poolAddress.toString());
+    const pool = await getPool(poolAddress);
+    const positionPubKey = new PublicKey(position_address);
+    const txHashes = [];
+
+    // Claim fees first
+    try {
+      const positionData = await pool.getPosition(positionPubKey);
+      const claimTxs = await pool.claimSwapFee({ owner: wallet.publicKey, position: positionData });
+      for (const tx of (Array.isArray(claimTxs) ? claimTxs : [claimTxs])) {
+        txHashes.push(await sendAndConfirmTransaction(getConnection(), tx, [wallet]));
+      }
+    } catch (e) {
+      log("remove_liquidity_warn", `Claim skipped: ${e.message}`);
+    }
+
+    // Remove liquidity but keep account open (shouldClaimAndClose: false)
+    const removeTxs = await pool.removeLiquidity({
+      user: wallet.publicKey,
+      position: positionPubKey,
+      fromBinId: -887272,
+      toBinId: 887272,
+      bps: new BN(10000),
+      shouldClaimAndClose: false,
+    });
+    for (const tx of (Array.isArray(removeTxs) ? removeTxs : [removeTxs])) {
+      txHashes.push(await sendAndConfirmTransaction(getConnection(), tx, [wallet]));
+    }
+
+    _positionsCacheAt = 0;
+    log("remove_liquidity", `SUCCESS txs: ${txHashes.join(", ")}`);
+    return { success: true, position: position_address, pool: poolAddress.toString(), txs: txHashes };
+  } catch (error) {
+    log("remove_liquidity_error", error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+// ─── Add Liquidity to existing position ───────────────────────
+export async function addLiquidity({ position_address, amount_x, amount_y, bins_below, bins_above, strategy }) {
+  position_address = normalizeMint(position_address);
+  if (process.env.DRY_RUN === "true") {
+    return { dry_run: true, would_add: position_address, message: "DRY RUN — no transaction sent" };
+  }
+  try {
+    log("add_liquidity", `Adding liquidity to position: ${position_address}`);
+    const { StrategyType } = await getDLMM();
+    const wallet = getWallet();
+    const poolAddress = await lookupPoolForPosition(position_address, wallet.publicKey.toString());
+    poolCache.delete(poolAddress.toString());
+    const pool = await getPool(poolAddress);
+    const activeBin = await pool.getActiveBin();
+    const positionPubKey = new PublicKey(position_address);
+
+    const activeStrategy = strategy || config.strategy.strategy;
+    const strategyMap = { spot: StrategyType.Spot, curve: StrategyType.Curve, bid_ask: StrategyType.BidAsk };
+    const strategyType = strategyMap[activeStrategy];
+    if (strategyType === undefined) throw new Error(`Invalid strategy: ${activeStrategy}`);
+
+    const minBinId = activeBin.binId - (bins_below ?? 0);
+    const maxBinId = activeBin.binId + (bins_above ?? 0);
+
+    const totalYLamports = new BN(Math.floor((amount_y ?? 0) * 1e9));
+    let totalXLamports = new BN(0);
+    if ((amount_x ?? 0) > 0) {
+      const mintInfo = await getConnection().getParsedAccountInfo(new PublicKey(pool.lbPair.tokenXMint));
+      const decimals = mintInfo.value?.data?.parsed?.info?.decimals ?? 9;
+      totalXLamports = new BN(Math.floor(amount_x * Math.pow(10, decimals)));
+    }
+
+    const addTxs = await pool.addLiquidityByStrategy({
+      positionPubKey,
+      user: wallet.publicKey,
+      totalXAmount: totalXLamports,
+      totalYAmount: totalYLamports,
+      strategy: { minBinId, maxBinId, strategyType },
+      slippage: 1000,
+    });
+    const txHashes = [];
+    for (const tx of (Array.isArray(addTxs) ? addTxs : [addTxs])) {
+      txHashes.push(await sendAndConfirmTransaction(getConnection(), tx, [wallet]));
+    }
+
+    _positionsCacheAt = 0;
+    log("add_liquidity", `SUCCESS txs: ${txHashes.join(", ")}`);
+    return { success: true, position: position_address, pool: poolAddress.toString(), txs: txHashes, min_bin: minBinId, max_bin: maxBinId };
+  } catch (error) {
+    log("add_liquidity_error", error.message);
+    return { success: false, error: error.message };
+  }
+}
+
 // ─── Helpers ──────────────────────────────────────────────────
 async function lookupPoolForPosition(position_address, walletAddress) {
   // Check state registry first (fast path)
