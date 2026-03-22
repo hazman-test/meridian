@@ -198,8 +198,12 @@ Only call tools if a position needs to be CLOSED or fees need to be CLAIMED.
 If all positions STAY and no fees to claim, just write the report with no tool calls.
 
 REPORT FORMAT (one per position):
-**[PAIR]** | Age: [X]m | Unclaimed: $[X] | Claimed: $[X] | PnL: [X]%
-**Rule:** [number or "none"] | **Decision:** STAY/CLOSE | **Reason:** [1 sentence]
+**[PAIR]** | Age: [X]m | Unclaimed: $[X] | PnL: [X]% | [STAY/CLOSE]
+Range: [████████░░░░░░░░░░░░] (20 chars: █ = bins up to active, ░ = bins above active)
+Only add: **Rule [N]:** [reason] — if a close rule triggered. Omit rule line if STAY with no rule.
+
+After all positions, add one summary line:
+💼 [N] positions | $[total_value] | fees today: $[sum_unclaimed] | [any notable action taken]
       `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel, 4096);
       mgmtReport = content;
     } catch (error) {
