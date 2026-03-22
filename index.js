@@ -322,7 +322,7 @@ STEPS:
 1. Pick the best candidate from the pre-loaded analysis above. If none pass, report why and stop.
 2. Call deploy_position tool now — do NOT skip this step or simulate it in text.
    Use ${deployAmount} SOL. Do NOT use a smaller amount — this is compounded from your ${currentBalance.sol.toFixed(3)} SOL wallet.
-   Set bins_below based on the pool's volatility: high volatility (>3) → 35 bins, medium (1–3) → 50 bins, low (<1) → 69 bins.
+   Set bins_below based on the pool's volatility: low volatility (<1) → 35 bins, medium (1–3) → 50 bins, high (>3) → 69 bins.
 3. Write your report AFTER the deploy tool call completes, using the actual result.
 
 REPORT FORMAT (one block per candidate evaluated):
