@@ -574,49 +574,6 @@ if (isTTY) {
       return;
     }
 
-    if (text === "/positions") {
-      try {
-        const { positions, total_positions } = await getMyPositions({ force: true });
-        if (total_positions === 0) {
-          await sendMessage("No open positions.");
-          return;
-        }
-        const lines = positions.map((p, i) => {
-          const pnl = p.pnl_usd >= 0 ? `+$${p.pnl_usd}` : `-$${Math.abs(p.pnl_usd)}`;
-          const age = p.age_minutes != null ? `${p.age_minutes}m` : "?";
-          const oor = !p.in_range ? " ⚠️OOR" : "";
-          return `${i + 1}. ${p.pair} | $${p.total_value_usd} | PnL: ${pnl} | fees: $${p.unclaimed_fees_usd} | ${age}${oor}`;
-        });
-        await sendMessage(`📊 Open Positions (${total_positions}):\n\n${lines.join("\n")}\n\nUse /close <n> to close a position.`);
-      } catch (e) {
-        await sendMessage(`Error: ${e.message}`).catch(() => {});
-      }
-      return;
-    }
-
-    const closeMatch = text.match(/^\/close\s+(\d+)$/i);
-    if (closeMatch) {
-      try {
-        const idx = parseInt(closeMatch[1]) - 1;
-        const { positions } = await getMyPositions({ force: true });
-        if (idx < 0 || idx >= positions.length) {
-          await sendMessage(`Invalid position number. Use /positions to see the list.`);
-          return;
-        }
-        const pos = positions[idx];
-        await sendMessage(`Closing ${pos.pair}...`);
-        const result = await closePosition({ position_address: pos.position });
-        if (result.success) {
-          await sendMessage(`✅ Closed ${pos.pair}\nPnL: $${result.pnl_usd ?? "?"} | txs: ${result.txs?.join(", ")}`);
-        } else {
-          await sendMessage(`❌ Close failed: ${JSON.stringify(result)}`);
-        }
-      } catch (e) {
-        await sendMessage(`Error: ${e.message}`).catch(() => {});
-      }
-      return;
-    }
-
     busy = true;
     try {
       log("telegram", `Incoming: ${text}`);
