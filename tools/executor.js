@@ -292,7 +292,7 @@ export async function executeTool(name, args) {
       if (name === "swap_token" && result.tx) {
         notifySwap({ inputSymbol: args.input_mint?.slice(0, 8), outputSymbol: args.output_mint === "So11111111111111111111111111111111111111112" || args.output_mint === "SOL" ? "SOL" : args.output_mint?.slice(0, 8), amountIn: result.amount_in, amountOut: result.amount_out, tx: result.tx }).catch(() => {});
       } else if (name === "deploy_position") {
-        notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
+        notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, amountX: args.amount_x ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
       } else if (name === "close_position") {
         notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0 }).catch(() => {});
         // Auto-swap base token back to SOL unless user said to hold
@@ -389,8 +389,9 @@ async function runSafetyChecks(name, args) {
         }
       }
 
-      // Force tokenX-only if bins_above > 0 and bins_below = 0 (sell-side position)
-      if ((args.bins_below === 0 || args.bins_below == null) && args.bins_above > 0 && args.amount_x > 0) {
+      // Strip SOL whenever amount_x is provided — agent often adds amount_y by default
+      // For tokenX-only: amount_x > 0 is sufficient, no SOL needed
+      if (args.amount_x > 0) {
         args.amount_y = 0;
         args.amount_sol = 0;
       }
@@ -404,19 +405,21 @@ async function runSafetyChecks(name, args) {
         };
       }
 
-      // Enforce minimum deploy amount — must be at least deployAmountSol (configured) or 0.1 SOL absolute floor.
-      const minDeploy = Math.max(0.1, config.management.deployAmountSol);
-      if (amountY < minDeploy) {
-        return {
-          pass: false,
-          reason: `Amount ${amountY} SOL is below the minimum deploy amount (${minDeploy} SOL). Use at least ${minDeploy} SOL.`,
-        };
-      }
-      if (amountY > config.risk.maxDeployAmount) {
-        return {
-          pass: false,
-          reason: `SOL amount ${amountY} exceeds maximum allowed per position (${config.risk.maxDeployAmount}).`,
-        };
+      // SOL amount checks only apply when actually deploying SOL
+      if (amountY > 0) {
+        const minDeploy = Math.max(0.1, config.management.deployAmountSol);
+        if (amountY < minDeploy) {
+          return {
+            pass: false,
+            reason: `Amount ${amountY} SOL is below the minimum deploy amount (${minDeploy} SOL). Use at least ${minDeploy} SOL.`,
+          };
+        }
+        if (amountY > config.risk.maxDeployAmount) {
+          return {
+            pass: false,
+            reason: `SOL amount ${amountY} exceeds maximum allowed per position (${config.risk.maxDeployAmount}).`,
+          };
+        }
       }
 
       // Check SOL balance — for tokenX-only deploys only gas reserve is needed
