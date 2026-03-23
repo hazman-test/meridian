@@ -88,28 +88,26 @@ Current screening timeframe: ${config.screening.timeframe} — interpret all met
 `;
 
   if (agentType === "SCREENER") {
-    basePrompt += `
-Your goal: Find high-yield, high-volume pools and DEPLOY capital.
+    return `You are an autonomous DLMM LP agent on Meteora, Solana. Role: SCREENER
 
-1. SCREEN: Use get_top_candidates or discover_pools.
-2. STUDY: Call study_top_lpers. Look for high win rates and sustainable volume.
-3. MEMORY: Before deploying to any pool, call get_pool_memory to check if you've been there before.
-4. SMART WALLETS + TOKEN CHECK: Call check_smart_wallets_on_pool, then call get_token_holders (base mint).
-   - global_fees_sol = total priority/jito tips paid by ALL traders on this token (NOT Meteora LP fees — completely different).
-   - HARD SKIP if global_fees_sol < minTokenFeesSol (default 30 SOL). Low fees = bundled txs or scam. No exceptions.
-   - Smart wallets present + fees pass → strong signal, proceed to deploy.
-   - No smart wallets → also call get_token_narrative before deciding:
-     * SKIP if top_10_real_holders_pct > 60% OR bundlers > 30% OR narrative is empty/null/pure hype with no specific story
-     * CAUTION if bundlers 15–30% AND top_10 > 40% — check organic + buy/sell pressure
-     * Bundlers 5–15% are normal, not a skip signal on their own
-     * GOOD narrative: specific origin (real event, viral moment, named entity, active community actions)
-     * BAD narrative: generic hype ("next 100x", "community token") with no identifiable subject or story
-     * DEPLOY if global_fees_sol passes, distribution is healthy, and narrative has a real specific catalyst
-5. DEPLOY: get_active_bin then deploy_position.
-   - HARD RULE: Minimum 0.1 SOL absolute floor (prefer 0.5+).
-   - HARD RULE: Bin steps must be [80-125].
-   - COMPOUNDING: Deploy amount is computed from wallet size — larger wallet = larger position. Use the amount provided in the cycle goal, do NOT default to a smaller fixed number.
-   - Focus on one high-conviction deployment per cycle.
+All candidates are pre-loaded and pre-filtered. Hard rules (fees, top10, bots, launchpad) already applied in JS.
+Your job: pick the highest-conviction candidate and call deploy_position. active_bin is pre-fetched.
+
+NARRATIVE QUALITY (your main judgment call):
+- GOOD: specific origin — real event, viral moment, named entity, active community
+- BAD: generic hype ("next 100x", "community token") with no identifiable subject
+- Smart wallets present → override weak narrative, deploy anyway
+- No smart wallets + no narrative → skip
+
+POOL MEMORY: Past losses or problems → strong skip signal.
+
+DEPLOY RULES:
+- COMPOUNDING: Use the deploy amount from the goal EXACTLY. Do NOT default to a smaller number.
+- bins_below = round(35 + (volatility/5)*34) clamped to [35,69]. bins_above = 0.
+- Bin steps must be [80-125].
+- Pick ONE pool. Deploy or explain why none qualify.
+
+${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}Timestamp: ${new Date().toISOString()}
 `;
   } else if (agentType === "MANAGER") {
     basePrompt += `

@@ -3,7 +3,7 @@ import cron from "node-cron";
 import readline from "readline";
 import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
-import { getMyPositions, closePosition } from "./tools/dlmm.js";
+import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
@@ -15,7 +15,7 @@ import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, setPositi
 import { getActiveStrategy } from "./strategy-library.js";
 import { recordPositionSnapshot, recallForPool } from "./pool-memory.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
-import { getTokenHolders, getTokenNarrative, getTokenInfo } from "./tools/token.js";
+import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
 
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
@@ -187,7 +187,6 @@ Summary: 💼 [N] positions | $[total_value] | fees: $[sum_unclaimed] | [action 
       const afterPositions = await getMyPositions({ force: true }).catch(() => null);
       const afterCount = afterPositions?.positions?.length ?? 0;
       if (afterCount < config.risk.maxPositions && Date.now() - _screeningLastTriggered > screeningCooldownMs) {
-        _screeningLastTriggered = Date.now();
         log("cron", `Post-management: ${afterCount}/${config.risk.maxPositions} positions — triggering screening`);
         runScreeningCycle().catch((e) => log("cron_error", `Triggered screening failed: ${e.message}`));
       }
@@ -208,8 +207,12 @@ Summary: 💼 [N] positions | $[total_value] | fees: $[sum_unclaimed] | [action 
   });
 
   async function runScreeningCycle() {
-    if (_screeningBusy) return;
+    if (_screeningBusy) {
+      log("cron", "Screening skipped — previous cycle still running");
+      return;
+    }
     _screeningBusy = true; // set immediately — prevents TOCTOU race with concurrent callers
+    _screeningLastTriggered = Date.now();
 
     // Hard guards — don't even run the agent if preconditions aren't met
     let prePositions, preBalance;
@@ -246,79 +249,103 @@ Summary: 💼 [N] positions | $[total_value] | fees: $[sum_unclaimed] | [action 
         ? `ACTIVE STRATEGY: ${activeStrategy.name} — LP: ${activeStrategy.lp_strategy} | bins_above: ${activeStrategy.range?.bins_above ?? 0} (FIXED — never change) | deposit: ${activeStrategy.entry?.single_side === "sol" ? "SOL only (amount_y, amount_x=0)" : "dual-sided"} | best for: ${activeStrategy.best_for}`
         : `No active strategy — use default bid_ask, bins_above: 0, SOL only.`;
 
-      // Pre-load top candidates + all recon data in parallel (saves 4-6 LLM steps)
+      // Fetch top candidates + all recon data fully in parallel
       const topCandidates = await getTopCandidates({ limit: 5 }).catch(() => null);
-      const candidates = topCandidates?.candidates || topCandidates?.pools || [];
+      const candidates = (topCandidates?.candidates || topCandidates?.pools || []).slice(0, 5);
 
-      const candidateBlocks = [];
-      for (const pool of candidates.slice(0, 5)) {
-        const mint = pool.base?.mint;
-        const [smartWallets, holders, narrative, tokenInfo, poolMemory] = await Promise.allSettled([
-          checkSmartWalletsOnPool({ pool_address: pool.pool }),
-          mint ? getTokenHolders({ mint, limit: 100 }) : Promise.resolve(null),
-          mint ? getTokenNarrative({ mint }) : Promise.resolve(null),
-          mint ? getTokenInfo({ query: mint }) : Promise.resolve(null),
-          Promise.resolve(recallForPool(pool.pool)),
-        ]);
+      const reconResults = await Promise.allSettled(
+        candidates.map(async (pool) => {
+          const mint = pool.base?.mint;
+          const [smartWallets, narrative, tokenInfo] = await Promise.allSettled([
+            checkSmartWalletsOnPool({ pool_address: pool.pool }),
+            mint ? getTokenNarrative({ mint }) : Promise.resolve(null),
+            mint ? getTokenInfo({ query: mint }) : Promise.resolve(null),
+          ]);
+          return {
+            pool,
+            sw: smartWallets.status === "fulfilled" ? smartWallets.value : null,
+            n: narrative.status === "fulfilled" ? narrative.value : null,
+            ti: tokenInfo.status === "fulfilled" ? tokenInfo.value?.results?.[0] : null,
+            mem: recallForPool(pool.pool),
+          };
+        })
+      );
 
-        const sw = smartWallets.status === "fulfilled" ? smartWallets.value : null;
-        const h = holders.status === "fulfilled" ? holders.value : null;
-        const n = narrative.status === "fulfilled" ? narrative.value : null;
-        const ti = tokenInfo.status === "fulfilled" ? tokenInfo.value?.results?.[0] : null;
-        const mem = poolMemory.value;
+      const allCandidates = reconResults.filter(r => r.status === "fulfilled").map(r => r.value);
 
+      // JS hard filters — no LLM needed for binary rule violations
+      const skipReasons = [];
+      const passing = allCandidates.filter(({ pool, ti }) => {
+        const launchpad = ti?.launchpad ?? null;
+        const feesSol = ti?.global_fees_sol;
+        const top10Pct = ti?.audit?.top_holders_pct;
+        const botPct = ti?.audit?.bot_holders_pct;
+
+        if (launchpad && config.screening.blockedLaunchpads.includes(launchpad)) {
+          skipReasons.push(`${pool.name}: blocked launchpad (${launchpad})`);
+          return false;
+        }
+        if (feesSol != null && feesSol < config.screening.minTokenFeesSol) {
+          skipReasons.push(`${pool.name}: fees ${feesSol} SOL < ${config.screening.minTokenFeesSol}`);
+          return false;
+        }
+        if (top10Pct != null && top10Pct > config.screening.maxTop10Pct) {
+          skipReasons.push(`${pool.name}: top10 ${top10Pct}% > ${config.screening.maxTop10Pct}%`);
+          return false;
+        }
+        if (botPct != null && botPct > config.screening.maxBundlersPct) {
+          skipReasons.push(`${pool.name}: bots ${botPct}% > ${config.screening.maxBundlersPct}%`);
+          return false;
+        }
+        return true;
+      });
+
+      if (skipReasons.length > 0) log("screening", `Hard-filtered: ${skipReasons.join(" | ")}`);
+
+      if (passing.length === 0) {
+        screenReport = `No candidates passed hard filters:\n${skipReasons.map(r => `- ${r}`).join("\n")}`;
+        return;
+      }
+
+      // Pre-fetch active_bin for passing candidates (removes one LLM tool-call step)
+      const activeBinResults = await Promise.allSettled(
+        passing.map(({ pool }) => getActiveBin({ pool_address: pool.pool }))
+      );
+
+      // Build compact candidate blocks
+      const candidateBlocks = passing.map(({ pool, sw, n, ti, mem }, i) => {
+        const botPct = ti?.audit?.bot_holders_pct ?? "?";
+        const top10Pct = ti?.audit?.top_holders_pct ?? "?";
+        const feesSol = ti?.global_fees_sol ?? "?";
+        const launchpad = ti?.launchpad ?? null;
         const priceChange = ti?.stats_1h?.price_change;
         const netBuyers = ti?.stats_1h?.net_buyers;
+        const activeBin = activeBinResults[i]?.status === "fulfilled" ? activeBinResults[i].value?.binId : null;
 
-        // Use Jupiter audit for bot/top holders (more reliable than custom detection)
-        const botPct = ti?.audit?.bot_holders_pct ?? h?.bundlers_pct_in_top_100 ?? "?";
-        const top10Pct = ti?.audit?.top_holders_pct ?? h?.top_10_real_holders_pct ?? "?";
-        const launchpad = ti?.launchpad ?? null;
-        const feesSol = ti?.global_fees_sol ?? h?.global_fees_sol ?? "?";
-
-        // Hard filter: skip blocked launchpads before even showing to LLM
-        if (launchpad && config.screening.blockedLaunchpads.length > 0) {
-          if (config.screening.blockedLaunchpads.includes(launchpad)) {
-            log("screening", `Skipping ${pool.name} — blocked launchpad: ${launchpad}`);
-            continue;
-          }
-        }
-
-        // Build compact block
-        const lines = [
+        return [
           `POOL: ${pool.name} (${pool.pool})`,
           `  metrics: bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}`,
           `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
           `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map(w => w.name).join(", ")})` : ""}`,
+          activeBin != null ? `  active_bin: ${activeBin}` : null,
           priceChange != null ? `  1h: price${priceChange >= 0 ? "+" : ""}${priceChange}%, net_buyers=${netBuyers ?? "?"}` : null,
           n?.narrative ? `  narrative: ${n.narrative.slice(0, 500)}` : `  narrative: none`,
           mem ? `  memory: ${mem}` : null,
-        ].filter(Boolean);
-
-        candidateBlocks.push(lines.join("\n"));
-      }
-
-      let candidateContext = candidateBlocks.length > 0
-        ? `\nPRE-LOADED CANDIDATE ANALYSIS (smart wallets, holders, narrative already fetched):\n${candidateBlocks.join("\n\n")}\n`
-        : "";
-
+        ].filter(Boolean).join("\n");
+      });
 
       const { content } = await agentLoop(`
 SCREENING CYCLE
 ${strategyBlock}
 Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | Deploy: ${deployAmount} SOL
-${candidateContext}
-DECISION RULES:
-- HARD SKIP if fees < ${config.screening.minTokenFeesSol} SOL (bundled/scam)
-- HARD SKIP if top10 > ${config.screening.maxTop10Pct}% OR bots > ${config.screening.maxBundlersPct}%
-${config.screening.blockedLaunchpads.length ? `- HARD SKIP if launchpad is any of: ${config.screening.blockedLaunchpads.join(", ")}` : ""}
-- SKIP if narrative is empty/null or pure hype with no specific story (unless smart wallets present)
-- Bots 5–25% are normal, not a skip reason on their own
-- Smart wallets present → strong confidence boost
+
+PRE-LOADED CANDIDATES (${passing.length} passed hard filters):
+${candidateBlocks.join("\n\n")}
 
 STEPS:
-1. Pick the best candidate. If none pass, report why and stop.
-2. Call deploy_position with ${deployAmount} SOL. Set bins_below = round(35 + (volatility/5)*34) clamped to [35,69].
+1. Pick the best candidate based on narrative quality, smart wallets, and pool metrics.
+2. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
+   bins_below = round(35 + (volatility/5)*34) clamped to [35,69].
 3. Report result.
       `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048);
       screenReport = content;
