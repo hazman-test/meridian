@@ -153,7 +153,7 @@ WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
           },
           amount_x: {
             type: "number",
-            description: "Amount of base token to deposit (if doing dual-sided or base-only)."
+            description: "Amount of base token to deposit. For tokenX-only positions: set this to the token balance from get_wallet_balance, set amount_y=0. Do NOT set amount_y when user asks for tokenX-only."
           },
           amount_sol: {
             type: "number",
