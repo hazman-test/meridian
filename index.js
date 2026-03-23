@@ -179,13 +179,7 @@ MANAGEMENT CYCLE — ${positions.length} position(s)
 PRE-LOADED POSITION DATA (no fetching needed):
 ${positionBlocks}${hivePatterns}
 
-SPECIAL INSTRUCTIONS — check before close rules:
-- instruction = "flip bid-ask" AND active_bin <= lower_bin → FLIP (execute all steps in order):
-  1. call get_wallet_balance to get current tokenX amount
-  2. call add_liquidity(position_address, amount_x=<tokenX balance>, amount_y=0, strategy=bid_ask) — omit bins, original range is reused automatically
-- instruction = "flip bid-ask" AND condition NOT met → HOLD, skip all close rules
-
-HARD CLOSE RULES — apply in order, first match wins (skip if instruction handled above):
+HARD CLOSE RULES — apply in order, first match wins:
 1. instruction set AND condition met → CLOSE (highest priority)
 2. instruction set AND condition NOT met → HOLD, skip remaining rules
 3. pnl_pct <= ${config.management.emergencyPriceDropPct}% → CLOSE (stop loss)
@@ -305,12 +299,12 @@ After all positions, add one summary line:
           // Build compact block
           const lines = [
             `POOL: ${pool.name} (${pool.pool})`,
-            `  metrics: bin_step=${pool.bin_step}, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, vol=${pool.volatility}, organic=${pool.organic_score}, mcap=$${pool.mcap}`,
+            `  metrics: bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}`,
             `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
-            sw?.in_pool?.length ? `  smart_wallets: ${sw.in_pool.map(w => w.name).join(", ")} ✓` : null,
+            `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map(w => w.name).join(", ")})` : ""}`,
             priceChange != null ? `  1h: price${priceChange >= 0 ? "+" : ""}${priceChange}%, net_buyers=${netBuyers ?? "?"}` : null,
-            n?.narrative ? `  narrative: ${n.narrative.slice(0, 200)}` : null,
-            mem ? `  memory: ${mem.slice(0, 150)}` : null,
+            n?.narrative ? `  narrative: ${n.narrative.slice(0, 500)}` : `  narrative: none`,
+            mem ? `  memory: ${mem}` : null,
           ].filter(Boolean);
 
           candidateBlocks.push(lines.join("\n"));
@@ -716,12 +710,16 @@ Commands:
     if (input === "/thresholds") {
       const s = config.screening;
       console.log("\nCurrent screening thresholds:");
-      console.log(`  maxVolatility:    ${s.maxVolatility}`);
-      console.log(`  minFeeTvlRatio:   ${s.minFeeTvlRatio}`);
-      console.log(`  minOrganic:       ${s.minOrganic}`);
-      console.log(`  minHolders:       ${s.minHolders}`);
-      console.log(`  maxPriceChangePct: ${s.maxPriceChangePct}`);
-      console.log(`  timeframe:        ${s.timeframe}`);
+      console.log(`  minFeeActiveTvlRatio: ${s.minFeeActiveTvlRatio}`);
+      console.log(`  minOrganic:           ${s.minOrganic}`);
+      console.log(`  minHolders:           ${s.minHolders}`);
+      console.log(`  minTvl:               ${s.minTvl}`);
+      console.log(`  maxTvl:               ${s.maxTvl}`);
+      console.log(`  minVolume:            ${s.minVolume}`);
+      console.log(`  minTokenFeesSol:      ${s.minTokenFeesSol}`);
+      console.log(`  maxBundlersPct:       ${s.maxBundlersPct}`);
+      console.log(`  maxTop10Pct:          ${s.maxTop10Pct}`);
+      console.log(`  timeframe:            ${s.timeframe}`);
       const perf = getPerformanceSummary();
       if (perf) {
         console.log(`\n  Based on ${perf.total_positions_closed} closed positions`);

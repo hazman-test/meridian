@@ -135,7 +135,7 @@ export function stopPolling() {
 }
 
 // ─── Notification helpers ────────────────────────────────────────
-export async function notifyDeploy({ pair, amountSol, amountX, position, tx, priceRange, binStep, baseFee }) {
+export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, binStep, baseFee }) {
   const priceStr = priceRange
     ? `Price range: ${priceRange.min < 0.0001 ? priceRange.min.toExponential(3) : priceRange.min.toFixed(6)} – ${priceRange.max < 0.0001 ? priceRange.max.toExponential(3) : priceRange.max.toFixed(6)}\n`
     : "";
@@ -144,7 +144,7 @@ export async function notifyDeploy({ pair, amountSol, amountX, position, tx, pri
     : "";
   await sendHTML(
     `✅ <b>Deployed</b> ${pair}\n` +
-    `Amount: ${amountX > 0 ? `${amountX} tokenX` : `${amountSol} SOL`}\n` +
+    `Amount: ${amountSol} SOL\n` +
     priceStr +
     poolStr +
     `Position: <code>${position?.slice(0, 8)}...</code>\n` +
@@ -172,13 +172,6 @@ export async function notifyOutOfRange({ pair, minutesOOR }) {
   await sendHTML(
     `⚠️ <b>Out of Range</b> ${pair}\n` +
     `Been OOR for ${minutesOOR} minutes`
-  );
-}
-
-export async function notifyCycleSummary({ cycleType, positions, walletSol }) {
-  await sendHTML(
-    `🔄 <b>${cycleType === "management" ? "Management" : "Screening"} cycle done</b>\n` +
-    `Positions: ${positions} open | SOL: ${walletSol}`
   );
 }
 

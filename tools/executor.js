@@ -7,14 +7,13 @@ import {
   getPositionPnl,
   claimFees,
   closePosition,
-  removeLiquidity,
-  addLiquidity,
   searchPools,
 } from "./dlmm.js";
 import { getWalletBalances, swapToken } from "./wallet.js";
 import { studyTopLPers } from "./study.js";
 import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, getPerformanceHistory, pinLesson, unpinLesson, listLessons } from "../lessons.js";
 import { setPositionInstruction } from "../state.js";
+
 import { getPoolMemory, addPoolNote } from "../pool-memory.js";
 import { addStrategy, listStrategies, getStrategy, setActiveStrategy, removeStrategy } from "../strategy-library.js";
 import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../token-blacklist.js";
@@ -55,18 +54,6 @@ const toolMap = {
   check_smart_wallets_on_pool: checkSmartWalletsOnPool,
   claim_fees: claimFees,
   close_position: closePosition,
-  remove_liquidity: removeLiquidity,
-  add_liquidity: async (args) => {
-    const result = await addLiquidity(args);
-    // Auto-clear "flip bid-ask" instruction after successful re-add so it doesn't re-trigger
-    if (result.success && args.position_address) {
-      const tracked = (await import("../state.js")).getTrackedPosition(args.position_address);
-      if (tracked?.instruction === "flip bid-ask") {
-        setPositionInstruction(args.position_address, null);
-      }
-    }
-    return result;
-  },
   get_wallet_balance: getWalletBalances,
   swap_token: swapToken,
   get_top_lpers: studyTopLPers,
@@ -292,7 +279,7 @@ export async function executeTool(name, args) {
       if (name === "swap_token" && result.tx) {
         notifySwap({ inputSymbol: args.input_mint?.slice(0, 8), outputSymbol: args.output_mint === "So11111111111111111111111111111111111111112" || args.output_mint === "SOL" ? "SOL" : args.output_mint?.slice(0, 8), amountIn: result.amount_in, amountOut: result.amount_out, tx: result.tx }).catch(() => {});
       } else if (name === "deploy_position") {
-        notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, amountX: args.amount_x ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
+        notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
       } else if (name === "close_position") {
         notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0 }).catch(() => {});
         // Auto-swap base token back to SOL unless user said to hold
@@ -389,47 +376,37 @@ async function runSafetyChecks(name, args) {
         }
       }
 
-      // Strip SOL whenever amount_x is provided — agent often adds amount_y by default
-      // For tokenX-only: amount_x > 0 is sufficient, no SOL needed
-      if (args.amount_x > 0) {
-        args.amount_y = 0;
-        args.amount_sol = 0;
-      }
-
       // Check amount limits
       const amountY = args.amount_y ?? args.amount_sol ?? 0;
-      if (amountY <= 0 && (!args.amount_x || args.amount_x <= 0)) {
+      if (amountY <= 0) {
         return {
           pass: false,
-          reason: `Must provide a positive amount for either SOL (amount_y) or base token (amount_x).`,
+          reason: `Must provide a positive SOL amount (amount_y).`,
         };
       }
 
-      // SOL amount checks only apply when actually deploying SOL
-      if (amountY > 0) {
-        const minDeploy = Math.max(0.1, config.management.deployAmountSol);
-        if (amountY < minDeploy) {
-          return {
-            pass: false,
-            reason: `Amount ${amountY} SOL is below the minimum deploy amount (${minDeploy} SOL). Use at least ${minDeploy} SOL.`,
-          };
-        }
-        if (amountY > config.risk.maxDeployAmount) {
-          return {
-            pass: false,
-            reason: `SOL amount ${amountY} exceeds maximum allowed per position (${config.risk.maxDeployAmount}).`,
-          };
-        }
+      const minDeploy = Math.max(0.1, config.management.deployAmountSol);
+      if (amountY < minDeploy) {
+        return {
+          pass: false,
+          reason: `Amount ${amountY} SOL is below the minimum deploy amount (${minDeploy} SOL). Use at least ${minDeploy} SOL.`,
+        };
+      }
+      if (amountY > config.risk.maxDeployAmount) {
+        return {
+          pass: false,
+          reason: `SOL amount ${amountY} exceeds maximum allowed per position (${config.risk.maxDeployAmount}).`,
+        };
       }
 
-      // Check SOL balance — for tokenX-only deploys only gas reserve is needed
+      // Check SOL balance
       const balance = await getWalletBalances();
       const gasReserve = config.management.gasReserve;
-      const minRequired = amountY > 0 ? amountY + gasReserve : gasReserve;
+      const minRequired = amountY + gasReserve;
       if (balance.sol < minRequired) {
         return {
           pass: false,
-          reason: `Insufficient SOL: have ${balance.sol} SOL, need ${minRequired} SOL (${amountY > 0 ? `${amountY} deploy + ` : ""}${gasReserve} gas reserve).`,
+          reason: `Insufficient SOL: have ${balance.sol} SOL, need ${minRequired} SOL (${amountY} deploy + ${gasReserve} gas reserve).`,
         };
       }
 

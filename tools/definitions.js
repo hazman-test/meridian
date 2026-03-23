@@ -153,7 +153,7 @@ WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
           },
           amount_x: {
             type: "number",
-            description: "Amount of base token to deposit. For tokenX-only positions: set this to the token balance from get_wallet_balance, set amount_y=0. Do NOT set amount_y when user asks for tokenX-only."
+            description: "Amount of base token to deposit (if doing dual-sided)."
           },
           amount_sol: {
             type: "number",
@@ -182,48 +182,6 @@ WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
           initial_value_usd: { type: "number", description: "Estimated USD value being deployed" }
         },
         required: ["pool_address"]
-      }
-    }
-  },
-
-  // ═══════════════════════════════════════════
-  //  LIQUIDITY MANAGEMENT TOOLS
-  // ═══════════════════════════════════════════
-  {
-    type: "function",
-    function: {
-      name: "remove_liquidity",
-      description: `Remove all liquidity from a position WITHOUT closing the position account.
-Use this for the flip bid-ask strategy: withdraw SOL-side liquidity, then re-add as tokenX-only.
-Does NOT close the position — the account stays open for re-use.`,
-      parameters: {
-        type: "object",
-        properties: {
-          position_address: { type: "string", description: "The position public key to remove liquidity from" }
-        },
-        required: ["position_address"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "add_liquidity",
-      description: `Add liquidity to an existing position account.
-If bins_below and bins_above are omitted, the position's original bin range is reused automatically.
-For flip bid-ask (re-add tokenX after OOR): set amount_x=<balance>, amount_y=0, omit bins — uses the position's original range automatically.
-For topping up an existing position with same range: just provide amount_x/amount_y, omit bins.`,
-      parameters: {
-        type: "object",
-        properties: {
-          position_address: { type: "string", description: "The existing position public key" },
-          amount_x: { type: "number", description: "Amount of base token to deposit" },
-          amount_y: { type: "number", description: "Amount of quote token (SOL) to deposit" },
-          bins_below: { type: "number", description: "Bins below active bin (0 for tokenX-only sell side)" },
-          bins_above: { type: "number", description: "Bins above active bin (set this for tokenX-only sell side)" },
-          strategy: { type: "string", enum: ["bid_ask", "spot"], description: "Strategy type" }
-        },
-        required: ["position_address"]
       }
     }
   },
