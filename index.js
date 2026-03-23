@@ -183,7 +183,7 @@ SPECIAL INSTRUCTIONS — check before close rules:
 - instruction = "flip bid-ask" AND active_bin <= lower_bin → FLIP (execute all steps in order):
   1. call remove_liquidity(position_address)
   2. call get_wallet_balance to get current tokenX amount
-  3. call add_liquidity(position_address, amount_x=<tokenX balance>, amount_y=0, bins_below=0, bins_above=<same as original bins_below>, strategy=bid_ask)
+  3. call add_liquidity(position_address, amount_x=<tokenX balance>, amount_y=0, bins_below=0, strategy=bid_ask) — bins_above auto-derived from original range
   4. call set_position_note(position_address, null) to clear the instruction
 - instruction = "flip bid-ask" AND condition NOT met → HOLD, skip all close rules
 

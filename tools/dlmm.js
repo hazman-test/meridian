@@ -746,16 +746,23 @@ export async function addLiquidity({ position_address, amount_x, amount_y, bins_
     const strategyType = strategyMap[activeStrategy];
     if (strategyType === undefined) throw new Error(`Invalid strategy: ${activeStrategy}`);
 
-    // Use existing position bin range if bins not explicitly provided
     const tracked = getTrackedPosition(position_address);
-    const existingMin = tracked?.bin_range?.min;
-    const existingMax = tracked?.bin_range?.max;
-    const minBinId = (bins_below != null || bins_above != null)
-      ? activeBin.binId - (bins_below ?? 0)
-      : (existingMin ?? activeBin.binId - 69);
-    const maxBinId = (bins_below != null || bins_above != null)
-      ? activeBin.binId + (bins_above ?? 0)
-      : (existingMax ?? activeBin.binId);
+
+    let minBinId, maxBinId;
+    if (bins_below == null && bins_above == null) {
+      // No bins provided — reuse existing position range
+      minBinId = tracked?.bin_range?.min ?? activeBin.binId - 69;
+      maxBinId = tracked?.bin_range?.max ?? activeBin.binId;
+    } else if (bins_below === 0 && bins_above == null) {
+      // Flip bid-ask: tokenX-only sell side — mirror original bins_below as bins_above
+      const originalBinsBelow = tracked?.bin_range?.bins_below ?? 69;
+      minBinId = activeBin.binId;
+      maxBinId = activeBin.binId + originalBinsBelow;
+    } else {
+      // Explicit bins provided
+      minBinId = activeBin.binId - (bins_below ?? 0);
+      maxBinId = activeBin.binId + (bins_above ?? 0);
+    }
 
     const totalYLamports = new BN(Math.floor((amount_y ?? 0) * 1e9));
     let totalXLamports = new BN(0);
