@@ -96,17 +96,11 @@ function stopCronJobs() {
   _cronTasks = [];
 }
 
-export function startCronJobs() {
-  stopCronJobs(); // stop any running tasks before (re)starting
-
-  const mgmtTask = cron.schedule(`*/${Math.max(1, config.schedule.managementIntervalMin)} * * * *`, async () => {
-    if (_managementBusy) return;
-    _managementBusy = true;
-    timers.managementLastRun = Date.now();
-    log("cron", `Starting management cycle [model: ${config.llm.managementModel}]`);
-    let mgmtReport = null;
-    let positions = [];
-    try {
+export async function runManagementCycle({ silent = false } = {}) {
+  log("cron", `Starting management cycle [model: ${config.llm.managementModel}]`);
+  let mgmtReport = null;
+  let positions = [];
+  try {
       // Pre-load all positions + PnL in parallel — LLM gets everything, no fetch steps needed
       const livePositions = await getMyPositions().catch(() => null);
       positions = livePositions?.positions || [];
@@ -209,8 +203,7 @@ After all positions, add one summary line:
       log("cron_error", `Management cycle failed: ${error.message}`);
       mgmtReport = `Management cycle failed: ${error.message}`;
     } finally {
-      _managementBusy = false;
-      if (telegramEnabled()) {
+      if (!silent && telegramEnabled()) {
         if (mgmtReport) sendMessage(`🔄 Management Cycle\n\n${mgmtReport}`).catch(() => {});
         for (const p of positions) {
           if (!p.in_range && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
@@ -219,9 +212,10 @@ After all positions, add one summary line:
         }
       }
     }
-  });
+  return mgmtReport;
+}
 
-  async function runScreeningCycle() {
+export async function runScreeningCycle({ silent = false } = {}) {
     if (_screeningBusy) return;
 
     // Hard guards — don't even run the agent if preconditions aren't met
@@ -350,11 +344,23 @@ STEPS:
       screenReport = `Screening cycle failed: ${error.message}`;
     } finally {
       _screeningBusy = false;
-      if (telegramEnabled()) {
+      if (!silent && telegramEnabled()) {
         if (screenReport) sendMessage(`🔍 Screening Cycle\n\n${screenReport}`).catch(() => {});
       }
     }
+    return screenReport;
   }
+
+export function startCronJobs() {
+  stopCronJobs();
+
+  const mgmtTask = cron.schedule(`*/${Math.max(1, config.schedule.managementIntervalMin)} * * * *`, async () => {
+    if (_managementBusy) return;
+    _managementBusy = true;
+    timers.managementLastRun = Date.now();
+    try { await runManagementCycle(); }
+    finally { _managementBusy = false; }
+  });
 
   const screenTask = cron.schedule(`*/${Math.max(1, config.schedule.screeningIntervalMin)} * * * *`, runScreeningCycle);
 
