@@ -210,8 +210,9 @@ Does NOT close the position — the account stays open for re-use.`,
     function: {
       name: "add_liquidity",
       description: `Add liquidity to an existing position account.
-Use this after remove_liquidity for the flip bid-ask strategy: re-add tokenX only with bins_above set.
-For tokenX-only (sell side): set amount_x, amount_y=0, bins_below=0, bins_above=<N>.`,
+If bins_below and bins_above are omitted, the position's original bin range is reused automatically.
+For flip bid-ask (tokenX-only sell side): set amount_x, amount_y=0, bins_below=0, bins_above=<N>.
+For topping up an existing position with same range: just provide amount_x/amount_y, omit bins.`,
       parameters: {
         type: "object",
         properties: {
