@@ -338,7 +338,12 @@ STEPS:
 2. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
    bins_below = round(35 + (volatility/5)*55) clamped to [35,90].
 3. Report in this exact format (no tables, no extra sections):
-   Deployed: PAIR | bin_step=X | fee=X% | bots=X% | top10=X% | fees=XSOL | range=minPrice→maxPrice (downside=minPrice/maxPrice*100%) | smart_wallets=name1,name2 (or none) | narrative: <one sentence> | reason: <one sentence why picked over others>
+   Deployed: PAIR
+   bin_step=X | fee=X% | bots=X% | top10=X% | fees=XSOL
+   range=minPrice→maxPrice (downside=minPrice/maxPrice*100%)
+   smart_wallets=name1,name2 (or none)
+   narrative: <one sentence>
+   reason: <one sentence why picked over others>
       `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048);
       screenReport = content;
     } catch (error) {
