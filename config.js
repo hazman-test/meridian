@@ -49,7 +49,7 @@ export const config = {
     outOfRangeBinsToClose: u.outOfRangeBinsToClose ?? 10,
     outOfRangeWaitMinutes: u.outOfRangeWaitMinutes ?? 30,
     minVolumeToRebalance:  u.minVolumeToRebalance  ?? 1000,
-    emergencyPriceDropPct: u.emergencyPriceDropPct ?? -50,
+    stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -50,
     takeProfitFeePct:      u.takeProfitFeePct      ?? 5,
     minFeePerTvl24h:       u.minFeePerTvl24h       ?? 7,
     minSolToOpen:          u.minSolToOpen          ?? 0.55,

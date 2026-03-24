@@ -174,7 +174,7 @@ export async function runManagementCycle({ silent = false } = {}) {
       })();
 
       // Rule 1: stop loss
-      if (!pnlSuspect && p.pnl_pct != null && p.pnl_pct <= config.management.emergencyPriceDropPct) {
+      if (!pnlSuspect && p.pnl_pct != null && p.pnl_pct <= config.management.stopLossPct) {
         actionMap.set(p.position, { action: "CLOSE", rule: 1, reason: "stop loss" });
         continue;
       }

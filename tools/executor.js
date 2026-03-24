@@ -147,7 +147,7 @@ const toolMap = {
       outOfRangeBinsToClose: ["management", "outOfRangeBinsToClose"],
       outOfRangeWaitMinutes: ["management", "outOfRangeWaitMinutes"],
       minVolumeToRebalance: ["management", "minVolumeToRebalance"],
-      emergencyPriceDropPct: ["management", "emergencyPriceDropPct"],
+      stopLossPct: ["management", "stopLossPct"],
       takeProfitFeePct: ["management", "takeProfitFeePct"],
       trailingTakeProfit: ["management", "trailingTakeProfit"],
       trailingTriggerPct: ["management", "trailingTriggerPct"],
