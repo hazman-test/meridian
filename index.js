@@ -158,13 +158,28 @@ export async function runManagementCycle({ silent = false } = {}) {
         actionMap.set(p.position, { action: "INSTRUCTION" });
         continue;
       }
+
+      // Sanity-check PnL against tracked initial deposit — API sometimes returns bad data
+      // giving -99% PnL which would incorrectly trigger stop loss
+      const tracked = getTrackedPosition(p.position);
+      const pnlSuspect = (() => {
+        if (p.pnl_pct == null) return false;
+        if (p.pnl_pct > -90) return false; // only flag extreme negatives
+        // Cross-check: if we have a tracked deposit and current value isn't near zero, it's bad data
+        if (tracked?.amount_sol && (p.total_value_usd ?? 0) > 0.01) {
+          log("cron_warn", `Suspect PnL for ${p.pair}: ${p.pnl_pct}% but position still has value — skipping PnL rules`);
+          return true;
+        }
+        return false;
+      })();
+
       // Rule 1: stop loss
-      if (p.pnl_pct != null && p.pnl_pct <= config.management.emergencyPriceDropPct) {
+      if (!pnlSuspect && p.pnl_pct != null && p.pnl_pct <= config.management.emergencyPriceDropPct) {
         actionMap.set(p.position, { action: "CLOSE", rule: 1, reason: "stop loss" });
         continue;
       }
       // Rule 2: take profit
-      if (p.pnl_pct != null && p.pnl_pct >= config.management.takeProfitFeePct) {
+      if (!pnlSuspect && p.pnl_pct != null && p.pnl_pct >= config.management.takeProfitFeePct) {
         actionMap.set(p.position, { action: "CLOSE", rule: 2, reason: "take profit" });
         continue;
       }
@@ -203,8 +218,8 @@ export async function runManagementCycle({ silent = false } = {}) {
     const reportLines = positionData.map((p) => {
       const act = actionMap.get(p.position);
       const inRange = p.in_range ? "🟢 IN" : `🔴 OOR ${p.minutes_out_of_range ?? 0}m`;
-      const val = config.management.solMode ? `◎${p.sol_value ?? "?"}` : `$${p.total_value_usd ?? "?"}`;
-      const unclaimed = config.management.solMode ? `◎${p.unclaimed_fees_sol ?? "?"}` : `$${p.unclaimed_fees_usd ?? "?"}`;
+      const val = config.management.solMode ? `◎${p.total_value_usd ?? "?"}` : `$${p.total_value_usd ?? "?"}`;
+      const unclaimed = config.management.solMode ? `◎${p.unclaimed_fees_usd ?? "?"}` : `$${p.unclaimed_fees_usd ?? "?"}`;
       const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
       let line = `**${p.pair}** | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}% | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
       if (p.instruction) line += `\nNote: "${p.instruction}"`;
@@ -219,8 +234,9 @@ export async function runManagementCycle({ silent = false } = {}) {
       ? needsAction.map(a => a.action === "INSTRUCTION" ? "EVAL instruction" : `${a.action}${a.reason ? ` (${a.reason})` : ""}`).join(", ")
       : "no action";
 
+    const cur = config.management.solMode ? "◎" : "$";
     mgmtReport = reportLines.join("\n\n") +
-      `\n\nSummary: 💼 ${positions.length} positions | $${totalValue.toFixed(2)} | fees: $${totalUnclaimed.toFixed(2)} | ${actionSummary}`;
+      `\n\nSummary: 💼 ${positions.length} positions | ${cur}${totalValue.toFixed(4)} | fees: ${cur}${totalUnclaimed.toFixed(4)} | ${actionSummary}`;
 
     // ── Call LLM only if action needed ──────────────────────────────
     const actionPositions = positionData.filter(p => {
