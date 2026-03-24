@@ -507,6 +507,11 @@ export async function claimFees({ position_address }) {
     return { dry_run: true, would_claim: position_address, message: "DRY RUN — no transaction sent" };
   }
 
+  const tracked = getTrackedPosition(position_address);
+  if (tracked?.closed) {
+    return { success: false, error: "Position already closed — fees were claimed during close" };
+  }
+
   try {
     log("claim", `Claiming fees for position: ${position_address}`);
     const wallet = getWallet();
