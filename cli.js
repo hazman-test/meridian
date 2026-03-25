@@ -294,7 +294,10 @@ switch (subcommand) {
       poolAddress = found.pool;
     }
 
-    out(await getPositionPnl({ pool_address: poolAddress, position_address: positionAddress }));
+    const pnl = await getPositionPnl({ pool_address: poolAddress, position_address: positionAddress });
+    if (tracked?.strategy) pnl.strategy = tracked.strategy;
+    if (tracked?.instruction) pnl.instruction = tracked.instruction;
+    out(pnl);
     break;
   }
 
