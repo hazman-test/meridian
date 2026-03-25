@@ -182,6 +182,8 @@ HARD CLOSE RULES — apply in order, first match wins:
 6. active_bin > upper_bin AND oor_minutes >= ${config.management.outOfRangeWaitMinutes} → CLOSE (stale above range)
 7. fee_per_tvl_24h < ${config.management.minFeePerTvl24h} AND age_minutes >= 60 → CLOSE (fee yield too low)
 
+When closing: call close_position only — it handles fee claiming internally, do NOT call claim_fees first.
+
 CLAIM RULE: If unclaimed_fee_usd >= ${config.management.minClaimAmount}, call claim_fees. Do not use any other threshold.
 
 INSTRUCTIONS:
