@@ -23,8 +23,8 @@ Meridian runs a **ReAct agent loop** — each cycle the LLM reasons over live da
 
 | Agent | Default interval | Role |
 |---|---|---|
-| **Hunter Alpha** | Every 30 min | Pool screening — finds and deploys into the best candidate |
-| **Healer Alpha** | Every 10 min | Position management — evaluates each open position and acts |
+| **Screening Agent** | Every 30 min | Pool screening — finds and deploys into the best candidate |
+| **Management Agent** | Every 10 min | Position management — evaluates each open position and acts |
 
 **Data sources:**
 - `@meteora-ag/dlmm` SDK — on-chain position data, active bin, deploy/close transactions
@@ -184,89 +184,96 @@ Run screening or management on a timer inside Claude Code:
 The `meridian` CLI gives you direct access to every tool with JSON output — useful for scripting, debugging, or piping into other tools.
 
 ```bash
+npm install -g .   # install globally (once)
+meridian <command> [flags]
+```
+
+Or run without installing:
+
+```bash
 node cli.js <command> [flags]
 ```
 
 **Positions & PnL**
 
 ```bash
-node cli.js positions
-node cli.js pnl <position_address>
-node cli.js wallet-positions --wallet <addr>
+meridian positions
+meridian pnl <position_address>
+meridian wallet-positions --wallet <addr>
 ```
 
 **Screening**
 
 ```bash
-node cli.js candidates --limit 5
-node cli.js pool-detail --pool <addr> [--timeframe 5m]
-node cli.js active-bin --pool <addr>
-node cli.js search-pools --query <name_or_symbol>
-node cli.js study --pool <addr> [--limit 4]
+meridian candidates --limit 5
+meridian pool-detail --pool <addr> [--timeframe 5m]
+meridian active-bin --pool <addr>
+meridian search-pools --query <name_or_symbol>
+meridian study --pool <addr> [--limit 4]
 ```
 
 **Token research**
 
 ```bash
-node cli.js token-info --query <mint_or_symbol>
-node cli.js token-holders --mint <addr> [--limit 20]
-node cli.js token-narrative --mint <addr>
+meridian token-info --query <mint_or_symbol>
+meridian token-holders --mint <addr> [--limit 20]
+meridian token-narrative --mint <addr>
 ```
 
 **Deploy & manage**
 
 ```bash
-node cli.js deploy --pool <addr> --amount <sol> [--bins-below 69] [--bins-above 0] [--strategy bid_ask|spot|curve] [--dry-run]
-node cli.js claim --position <addr>
-node cli.js close --position <addr> [--skip-swap] [--dry-run]
-node cli.js swap --from <mint> --to <mint> --amount <n> [--dry-run]
-node cli.js add-liquidity --position <addr> --pool <addr> [--amount-x <n>] [--amount-y <n>] [--strategy spot]
-node cli.js withdraw-liquidity --position <addr> --pool <addr> [--bps 10000]
+meridian deploy --pool <addr> --amount <sol> [--bins-below 69] [--bins-above 0] [--strategy bid_ask|spot|curve] [--dry-run]
+meridian claim --position <addr>
+meridian close --position <addr> [--skip-swap] [--dry-run]
+meridian swap --from <mint> --to <mint> --amount <n> [--dry-run]
+meridian add-liquidity --position <addr> --pool <addr> [--amount-x <n>] [--amount-y <n>] [--strategy spot]
+meridian withdraw-liquidity --position <addr> --pool <addr> [--bps 10000]
 ```
 
 **Agent cycles**
 
 ```bash
-node cli.js screen [--dry-run] [--silent]   # one AI screening cycle
-node cli.js manage [--dry-run] [--silent]   # one AI management cycle
-node cli.js start [--dry-run]               # start autonomous agent with cron jobs
+meridian screen [--dry-run] [--silent]   # one AI screening cycle
+meridian manage [--dry-run] [--silent]   # one AI management cycle
+meridian start [--dry-run]               # start autonomous agent with cron jobs
 ```
 
 **Config**
 
 ```bash
-node cli.js config get
-node cli.js config set <key> <value>
+meridian config get
+meridian config set <key> <value>
 ```
 
 **Learning & memory**
 
 ```bash
-node cli.js lessons
-node cli.js lessons add "your lesson text"
-node cli.js performance [--limit 200]
-node cli.js evolve
-node cli.js pool-memory --pool <addr>
+meridian lessons
+meridian lessons add "your lesson text"
+meridian performance [--limit 200]
+meridian evolve
+meridian pool-memory --pool <addr>
 ```
 
 **Blacklist**
 
 ```bash
-node cli.js blacklist list
-node cli.js blacklist add --mint <addr> --reason "reason"
+meridian blacklist list
+meridian blacklist add --mint <addr> --reason "reason"
 ```
 
 **Discord signals**
 
 ```bash
-node cli.js discord-signals
-node cli.js discord-signals clear
+meridian discord-signals
+meridian discord-signals clear
 ```
 
 **Balance**
 
 ```bash
-node cli.js balance
+meridian balance
 ```
 
 **Flags**
