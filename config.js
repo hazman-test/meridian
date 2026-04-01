@@ -13,6 +13,8 @@ const u = fs.existsSync(USER_CONFIG_PATH)
 if (u.rpcUrl)    process.env.RPC_URL            ||= u.rpcUrl;
 if (u.walletKey) process.env.WALLET_PRIVATE_KEY ||= u.walletKey;
 if (u.llmModel)  process.env.LLM_MODEL          ||= u.llmModel;
+if (u.llmBaseUrl) process.env.LLM_BASE_URL ||= u.llmBaseUrl;
+if (u.llmApiKey)  process.env.LLM_API_KEY  ||= u.llmApiKey;
 if (u.dryRun !== undefined) process.env.DRY_RUN ||= String(u.dryRun);
 
 export const config = {
@@ -40,6 +42,11 @@ export const config = {
     maxBundlersPct:    u.maxBundlersPct    ?? 30,  // max bot/bundler holders % (from Jupiter audit)
     maxTop10Pct:       u.maxTop10Pct       ?? 60,  // max top 10 holders concentration
     blockedLaunchpads: u.blockedLaunchpads ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
+    athFilterPct:       u.athFilterPct       ?? null,
+    maxBundlePct:       u.maxBundlePct       ?? 30,
+    maxBotHoldersPct:   u.maxBotHoldersPct   ?? 30,
+    minTokenAgeHours:   u.minTokenAgeHours   ?? null,
+    maxTokenAgeHours:   u.maxTokenAgeHours   ?? null,
   },
 
   // ─── Position Management ────────────────
@@ -56,6 +63,8 @@ export const config = {
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,
     positionSizePct:       u.positionSizePct       ?? 0.35,
+    minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 60,
+    solMode:                u.solMode                ?? false,
   },
 
   // ─── Strategy Mapping ───────────────────
@@ -86,6 +95,18 @@ export const config = {
     SOL:  "So11111111111111111111111111111111111111112",
     USDC: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
     USDT: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+  },
+
+  // ─── Darwinian Signal Weighting ───────────
+  darwin: {
+    enabled:        u.darwinEnabled     ?? true,
+    windowDays:     u.darwinWindowDays  ?? 60,
+    recalcEvery:    u.darwinRecalcEvery ?? 5,
+    boostFactor:    u.darwinBoost       ?? 1.05,
+    decayFactor:    u.darwinDecay       ?? 0.95,
+    weightFloor:    u.darwinFloor       ?? 0.3,
+    weightCeiling:  u.darwinCeiling     ?? 2.5,
+    minSamples:     u.darwinMinSamples  ?? 10,
   },
 };
 
@@ -134,6 +155,11 @@ export function reloadScreeningThresholds() {
     if (fresh.maxBinStep     != null) s.maxBinStep     = fresh.maxBinStep;
     if (fresh.timeframe      != null) s.timeframe      = fresh.timeframe;
     if (fresh.category       != null) s.category       = fresh.category;
+    if (fresh.athFilterPct      !== undefined) s.athFilterPct     = fresh.athFilterPct;
+    if (fresh.maxBundlePct      != null) s.maxBundlePct     = fresh.maxBundlePct;
+    if (fresh.maxBotHoldersPct  != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct;
+    if (fresh.minTokenAgeHours  !== undefined) s.minTokenAgeHours = fresh.minTokenAgeHours;
+    if (fresh.maxTokenAgeHours  !== undefined) s.maxTokenAgeHours = fresh.maxTokenAgeHours;
   } catch { /* ignore */ }
 }
 

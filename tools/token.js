@@ -27,10 +27,7 @@ export async function getTokenInfo({ query }) {
   const tokens = Array.isArray(data) ? data : [data];
   if (!tokens.length) return { found: false, query };
 
-  return {
-    found: true,
-    query,
-    results: tokens.slice(0, 5).map((t) => ({
+  const results = tokens.slice(0, 5).map((t) => ({
       mint: t.id,
       name: t.name,
       symbol: t.symbol,
@@ -66,8 +63,31 @@ export async function getTokenInfo({ query }) {
         buyers: t.stats24h.numOrganicBuyers,
         net_buyers: t.stats24h.numNetBuyers,
       } : null,
-    })),
-  };
+    }));
+
+  // Enrich first result with OKX smart money + risk data (public endpoint, no key needed)
+  if (results[0]?.mint) {
+    const { getAdvancedInfo, getClusterList } = await import("./okx.js");
+    const [adv, clusters] = await Promise.all([
+      getAdvancedInfo(results[0].mint).catch(() => null),
+      getClusterList(results[0].mint).catch(() => []),
+    ]);
+    if (adv) {
+      results[0].risk_level      = adv.risk_level;
+      results[0].bundle_pct      = adv.bundle_pct;
+      results[0].sniper_pct      = adv.sniper_pct;
+      results[0].suspicious_pct  = adv.suspicious_pct;
+      results[0].smart_money_buy = adv.smart_money_buy;
+      results[0].tags            = adv.tags;
+    }
+    if (clusters?.length) {
+      results[0].kol_in_clusters   = clusters.some((c) => c.has_kol);
+      results[0].top_cluster_trend = clusters[0]?.trend ?? null;
+      results[0].clusters          = clusters;
+    }
+  }
+
+  return { found: true, query, results };
 }
 
 /**
@@ -147,6 +167,13 @@ export async function getTokenHolders({ mint, limit = 20 }) {
 
   const totalBundlersPct = bundlers.reduce((s, b) => s + (Number(b.percentage) || 0), 0);
 
+  // ─── Bundle / Cluster Analysis (OKX) ─────────────────────────
+  const { getAdvancedInfo, getClusterList } = await import("./okx.js");
+  const [advancedData, clusterList] = await Promise.all([
+    getAdvancedInfo(mint).catch(() => null),
+    getClusterList(mint).catch(() => []),
+  ]);
+
   // ─── Smart Wallet / KOL Cross-reference ──────────────────────
   // Use targeted holders endpoint — only returns matching wallets, no noise
   const { listSmartWallets } = await import("../smart-wallets.js");
@@ -215,6 +242,11 @@ export async function getTokenHolders({ mint, limit = 20 }) {
     top_10_real_holders_pct: top10Pct.toFixed(2),
     bundlers_pct_in_top_100: totalBundlersPct.toFixed(4),
     bundlers,
+    // OKX advanced info
+    risk_level:     advancedData?.risk_level     ?? null,  // 1=low..5=high
+    bundle_pct:     advancedData?.bundle_pct     ?? null,
+    sniper_pct:     advancedData?.sniper_pct     ?? null,
+    suspicious_pct: advancedData?.suspicious_pct ?? null,
     smart_wallets_holding: smartWalletsHolding,
     holders: mapped,
   };

@@ -16,6 +16,8 @@ import { getActiveStrategy } from "./strategy-library.js";
 import { recordPositionSnapshot, recallForPool } from "./pool-memory.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenHolders, getTokenNarrative, getTokenInfo } from "./tools/token.js";
+import { stageSignals } from "./signal-tracker.js";
+import { getWeightsSummary } from "./signal-weights.js";
 
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
@@ -49,6 +51,12 @@ function buildPrompt() {
   const mgmt  = formatCountdown(nextRunIn(timers.managementLastRun, config.schedule.managementIntervalMin));
   const scrn  = formatCountdown(nextRunIn(timers.screeningLastRun,  config.schedule.screeningIntervalMin));
   return `[manage: ${mgmt} | screen: ${scrn}]\n> `;
+}
+
+/** Strip <think>...</think> reasoning blocks that some models leak into output */
+function stripThink(text) {
+  if (!text) return text;
+  return text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 }
 
 // ═══════════════════════════════════════════
@@ -206,7 +214,7 @@ After all positions, add one summary line:
       mgmtReport = `Management cycle failed: ${error.message}`;
     } finally {
       if (!silent && telegramEnabled()) {
-        if (mgmtReport) sendMessage(`🔄 Management Cycle\n\n${mgmtReport}`).catch(() => {});
+        if (mgmtReport) sendMessage(`🔄 Management Cycle\n\n${stripThink(mgmtReport)}`).catch(() => {});
         for (const p of positions) {
           if (!p.in_range && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
             notifyOutOfRange({ pair: p.pair, minutesOOR: p.minutes_out_of_range }).catch(() => {});
@@ -304,6 +312,20 @@ export async function runScreeningCycle({ silent = false } = {}) {
           ].filter(Boolean);
 
           candidateBlocks.push(lines.join("\n"));
+
+          // Stage signals for Darwinian weighting — captured before LLM decides
+          if (config.darwin?.enabled) {
+            stageSignals(pool.pool, {
+              organic_score:         pool.organic_score         ?? null,
+              fee_tvl_ratio:         pool.fee_active_tvl_ratio  ?? null,
+              volume:                pool.volume_window         ?? null,
+              mcap:                  pool.mcap                  ?? null,
+              holder_count:          ti?.holders                ?? null,
+              smart_wallets_present: (sw?.in_pool?.length ?? 0) > 0,
+              narrative_quality:     n?.narrative ? "present" : "absent",
+              volatility:            pool.volatility            ?? null,
+            });
+          }
       }
 
       let candidateContext = candidateBlocks.length > 0
@@ -354,7 +376,7 @@ STEPS:
     } finally {
       _screeningBusy = false;
       if (!silent && telegramEnabled()) {
-        if (screenReport) sendMessage(`🔍 Screening Cycle\n\n${screenReport}`).catch(() => {});
+        if (screenReport) sendMessage(`🔍 Screening Cycle\n\n${stripThink(screenReport)}`).catch(() => {});
       }
     }
     return screenReport;
@@ -615,7 +637,7 @@ if (isTTY) {
       const agentRole = isDeployRequest ? "SCREENER" : "GENERAL";
       const { content } = await agentLoop(text, config.llm.maxSteps, sessionHistory, agentRole, config.llm.generalModel);
       appendHistory(text, content);
-      await sendMessage(content);
+      await sendMessage(stripThink(content));
     } catch (e) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
     } finally {

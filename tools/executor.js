@@ -19,6 +19,7 @@ import { setPositionInstruction } from "../state.js";
 import { getPoolMemory, addPoolNote } from "../pool-memory.js";
 import { addStrategy, listStrategies, getStrategy, setActiveStrategy, removeStrategy } from "../strategy-library.js";
 import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../token-blacklist.js";
+import { blockDev, unblockDev, listBlockedDevs } from "../dev-blocklist.js";
 import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsOnPool } from "../smart-wallets.js";
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
 import { config, reloadScreeningThresholds } from "../config.js";
@@ -99,6 +100,9 @@ const toolMap = {
   add_to_blacklist: addToBlacklist,
   remove_from_blacklist: removeFromBlacklist,
   list_blacklist: listBlacklist,
+  block_deployer: ({ wallet, reason, label }) => blockDev({ wallet, reason, label }),
+  unblock_deployer: ({ wallet }) => unblockDev({ wallet }),
+  list_blocked_deployers: () => listBlockedDevs(),
   add_lesson: ({ rule, tags, pinned, role }) => {
     addLesson(rule, tags || [], { pinned: !!pinned, role: role || null });
     return { saved: true, rule, pinned: !!pinned, role: role || "all" };
@@ -144,7 +148,12 @@ const toolMap = {
       minTokenFeesSol: ["screening", "minTokenFeesSol"],
       maxBundlersPct: ["screening", "maxBundlersPct"],
       maxTop10Pct: ["screening", "maxTop10Pct"],
+      athFilterPct: ["screening", "athFilterPct"],
+      maxBundlePct: ["screening", "maxBundlePct"],
+      maxBotHoldersPct: ["screening", "maxBotHoldersPct"],
       minFeePerTvl24h: ["management", "minFeePerTvl24h"],
+      minAgeBeforeYieldCheck: ["management", "minAgeBeforeYieldCheck"],
+      solMode: ["management", "solMode"],
       // management
       minClaimAmount: ["management", "minClaimAmount"],
       autoSwapAfterClaim: ["management", "autoSwapAfterClaim"],

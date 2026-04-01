@@ -11,7 +11,7 @@
  */
 import { config } from "./config.js";
 
-export function buildSystemPrompt(agentType, portfolio, positions, stateSummary = null, lessons = null, perfSummary = null) {
+export function buildSystemPrompt(agentType, portfolio, positions, stateSummary = null, lessons = null, perfSummary = null, weightsSummary = null) {
   const s = config.screening;
 
   let basePrompt = `You are an autonomous DLMM LP (Liquidity Provider) agent operating on Meteora, Solana.
@@ -119,7 +119,13 @@ Your goal: Find high-yield, high-volume pools and DEPLOY capital using data-driv
 
 Pool age affects shape: New pools (<3 days) → Spot or Bid-Ask equally. Mature pools (10+ days) → Bid-Ask outperforms (2x avg PnL, 93% win rate).
 Deposit size: >$2K favors Bid-Ask over Spot (Spot breaks at large deposits).
-`;
+
+TOKEN TAGS (from OKX advanced-info):
+- dev_sold_all = BULLISH — dev has no tokens left to dump
+- smart_money_buy = BULLISH — smart money actively buying
+- dex_boost / dex_screener_paid = NEUTRAL — paid promotion, not organic
+- is_honeypot = HARD SKIP
+${weightsSummary ? `\n${weightsSummary}\nPrioritize candidates whose strongest attributes align with high-weight signals.\n` : ""}`;
   } else if (agentType === "MANAGER") {
     basePrompt += `
 Your goal: Manage positions to maximize total Fee + PnL yield using strategy-aware decisions.

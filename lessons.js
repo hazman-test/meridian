@@ -113,6 +113,15 @@ export async function recordPerformance(perf) {
       reloadScreeningThresholds();
       log("evolve", `Auto-evolved thresholds: ${JSON.stringify(result.changes)}`);
     }
+
+    // Darwinian signal weight recalculation
+    if (config.darwin?.enabled) {
+      const { recalculateWeights } = await import("./signal-weights.js");
+      const wResult = recalculateWeights(data.performance, config);
+      if (wResult.changes.length > 0) {
+        log("evolve", `Darwin: adjusted ${wResult.changes.length} signal weight(s)`);
+      }
+    }
   }
 
   // Fire-and-forget sync to hive mind (if enabled)

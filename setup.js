@@ -288,23 +288,62 @@ const screeningIntervalMin = await askNum(
   { min: 5 }
 );
 
-// ─── Section 8: LLM Models ────────────────────────────────────────────────────
-console.log("\n── LLM Models ────────────────────────────────────────────────");
-console.log(`  Default: ${DEFAULT_MODEL} (free, fast)\n`);
+// ─── Section 8: LLM Provider ─────────────────────────────────────────────────
+console.log("\n── LLM Provider ──────────────────────────────────────────────");
 
-const managementModel = await ask(
-  "Management agent model",
-  e("managementModel", DEFAULT_MODEL)
-);
+const LLM_PROVIDERS = [
+  {
+    label:   "OpenRouter   (openrouter.ai — many models)",
+    key:     "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    keyHint: "sk-or-...",
+    modelDefault: "nousresearch/hermes-3-llama-3.1-405b",
+  },
+  {
+    label:   "MiniMax      (api.minimax.io)",
+    key:     "minimax",
+    baseUrl: "https://api.minimax.io/v1",
+    keyHint: "your MiniMax API key",
+    modelDefault: "MiniMax-Text-01",
+  },
+  {
+    label:   "OpenAI       (api.openai.com)",
+    key:     "openai",
+    baseUrl: "https://api.openai.com/v1",
+    keyHint: "sk-...",
+    modelDefault: "gpt-4o",
+  },
+  {
+    label:   "Local / LM Studio / Ollama (OpenAI-compatible)",
+    key:     "local",
+    baseUrl: "http://localhost:1234/v1",
+    keyHint: "(leave blank or type any value)",
+    modelDefault: "local-model",
+  },
+  {
+    label:   "Custom       (any OpenAI-compatible endpoint)",
+    key:     "custom",
+    baseUrl: "",
+    keyHint: "your API key",
+    modelDefault: "",
+  },
+];
 
-const screeningModel = await ask(
-  "Screening agent model",
-  e("screeningModel", DEFAULT_MODEL)
-);
+const providerChoice = await askChoice("Select LLM provider:", LLM_PROVIDERS.map((p) => ({ label: p.label, key: p.key })));
+const provider = LLM_PROVIDERS.find((p) => p.key === providerChoice.key);
 
-const generalModel = await ask(
-  "General/chat model",
-  e("generalModel", DEFAULT_MODEL)
+let llmBaseUrl = provider.baseUrl;
+if (provider.key === "local" || provider.key === "custom") {
+  llmBaseUrl = await ask("Base URL", e("llmBaseUrl", provider.baseUrl || "http://localhost:1234/v1"));
+}
+
+const llmApiKeyExisting = e("llmApiKey", existingEnv.LLM_API_KEY || existingEnv.OPENROUTER_API_KEY || "");
+const llmApiKeyRaw = await ask("API Key", llmApiKeyExisting ? "*** (already set)" : (provider.keyHint || ""));
+const llmApiKey   = llmApiKeyRaw.startsWith("***") ? llmApiKeyExisting : llmApiKeyRaw;
+
+const llmModel = await ask(
+  "Model name",
+  e("llmModel", process.env.LLM_MODEL || provider.modelDefault)
 );
 
 rl.close();
@@ -341,9 +380,10 @@ const userConfig = {
   outOfRangeWaitMinutes,
   managementIntervalMin,
   screeningIntervalMin,
-  managementModel,
-  screeningModel,
-  generalModel,
+  llmProvider: provider.key,
+  llmBaseUrl,
+  llmModel,
+  ...(llmApiKey ? { llmApiKey } : {}),
   telegramChatId: telegramChatId || "",
   dryRun,
 };
@@ -372,7 +412,9 @@ console.log(`
   OOR close:    after ${outOfRangeWaitMinutes} min
 
   Cycles:       management every ${managementIntervalMin}m  ·  screening every ${screeningIntervalMin}m
-  Models:       ${managementModel}
+  Provider:     ${provider.label.split("(")[0].trim()}
+  Model:        ${llmModel}
+  Base URL:     ${llmBaseUrl}
 
   Telegram:     ${telegramToken ? "enabled" : "disabled"}
   .env:         ${ENV_PATH}

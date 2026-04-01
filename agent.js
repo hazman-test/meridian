@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { jsonrepair } from "jsonrepair";
 import { buildSystemPrompt } from "./prompt.js";
 import { executeTool } from "./tools/executor.js";
 import { tools } from "./tools/definitions.js";
@@ -41,7 +42,15 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
   const stateSummary = getStateSummary();
   const lessons = getLessonsForPrompt({ agentType });
   const perfSummary = getPerformanceSummary();
-  const systemPrompt = buildSystemPrompt(agentType, portfolio, positions, stateSummary, lessons, perfSummary);
+  let weightsSummary = null;
+  if (agentType === "SCREENER") {
+    try {
+      const { getWeightsSummary } = await import("./signal-weights.js");
+      const { config } = await import("./config.js");
+      if (config.darwin?.enabled) weightsSummary = getWeightsSummary();
+    } catch { }
+  }
+  const systemPrompt = buildSystemPrompt(agentType, portfolio, positions, stateSummary, lessons, perfSummary, weightsSummary);
 
   const messages = [
     { role: "system", content: systemPrompt },
@@ -90,6 +99,17 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
         throw new Error(`API returned no choices: ${response.error?.message || JSON.stringify(response)}`);
       }
       const msg = response.choices[0].message;
+      if (msg.tool_calls) {
+        for (const tc of msg.tool_calls) {
+          if (tc.function?.arguments) {
+            try { JSON.parse(tc.function.arguments); }
+            catch {
+              try { tc.function.arguments = JSON.stringify(JSON.parse(jsonrepair(tc.function.arguments))); }
+              catch { tc.function.arguments = "{}"; }
+            }
+          }
+        }
+      }
       messages.push(msg);
 
       // If the model didn't call any tools, it's done
@@ -107,7 +127,7 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
 
       // Execute each tool call in parallel
       const toolResults = await Promise.all(msg.tool_calls.map(async (toolCall) => {
-        const functionName = toolCall.function.name;
+        const functionName = toolCall.function.name.replace(/<.*$/, "").trim();
         let functionArgs;
 
         try {

@@ -1,5 +1,6 @@
 import { config } from "../config.js";
 import { isBlacklisted } from "../token-blacklist.js";
+import { isDevBlocked } from "../dev-blocklist.js";
 import { log } from "../logger.js";
 
 const POOL_DISCOVERY_BASE = "https://pool-discovery-api.datapi.meteora.ag";
@@ -85,6 +86,82 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const eligible = pools
     .filter((p) => !occupiedPools.has(p.pool) && !occupiedMints.has(p.base?.mint))
     .slice(0, limit);
+
+  // Enrich with OKX data — advanced info (risk/bundle/sniper) + ATH price (no API key required)
+  if (eligible.length > 0) {
+    const { getAdvancedInfo, getPriceInfo, getClusterList } = await import("./okx.js");
+    const okxResults = await Promise.allSettled(
+      eligible.map((p) => p.base?.mint
+        ? Promise.all([getAdvancedInfo(p.base.mint), getPriceInfo(p.base.mint), getClusterList(p.base.mint)])
+        : Promise.resolve([null, null, []])
+      )
+    );
+    for (let i = 0; i < eligible.length; i++) {
+      const r = okxResults[i];
+      if (r.status !== "fulfilled") continue;
+      const [adv, price, clusters] = r.value;
+      if (adv) {
+        eligible[i].risk_level      = adv.risk_level;
+        eligible[i].bundle_pct      = adv.bundle_pct;
+        eligible[i].sniper_pct      = adv.sniper_pct;
+        eligible[i].suspicious_pct  = adv.suspicious_pct;
+        eligible[i].smart_money_buy = adv.smart_money_buy;
+        eligible[i].dev_sold_all    = adv.dev_sold_all;
+        eligible[i].dex_boost       = adv.dex_boost;
+        eligible[i].dex_screener_paid = adv.dex_screener_paid;
+        if (adv.creator && !eligible[i].dev) eligible[i].dev = adv.creator;
+      }
+      if (price) {
+        eligible[i].price_vs_ath_pct = price.price_vs_ath_pct;
+        eligible[i].ath              = price.ath;
+      }
+      if (clusters?.length) {
+        // Surface KOL presence and top cluster trend for LLM
+        eligible[i].kol_in_clusters      = clusters.some((c) => c.has_kol);
+        eligible[i].top_cluster_trend    = clusters[0]?.trend ?? null;
+        eligible[i].top_cluster_hold_pct = clusters[0]?.holding_pct ?? null;
+      }
+    }
+    // Bundle filter — drop pools where OKX bundle % exceeds threshold
+    const maxBundle = config.screening.maxBundlePct;
+    if (maxBundle != null) {
+      eligible.splice(0, eligible.length, ...eligible.filter((p) => {
+        if (p.bundle_pct != null && p.bundle_pct > maxBundle) {
+          log("screening", `Bundle filter: dropped ${p.name} — bundle ${p.bundle_pct}% > ${maxBundle}%`);
+          return false;
+        }
+        return true;
+      }));
+    }
+
+    // ATH filter — drop pools where price is too close to ATH
+    const athFilter = config.screening.athFilterPct;
+    if (athFilter != null) {
+      const threshold = 100 + athFilter; // e.g. -20 → threshold = 80 (price must be <= 80% of ATH)
+      const before = eligible.length;
+      eligible.splice(0, eligible.length, ...eligible.filter((p) => {
+        if (p.price_vs_ath_pct == null) return true; // no data → don't filter
+        if (p.price_vs_ath_pct > threshold) {
+          log("screening", `ATH filter: dropped ${p.name} — ${p.price_vs_ath_pct}% of ATH (limit: ${threshold}%)`);
+          return false;
+        }
+        return true;
+      }));
+      if (eligible.length < before) log("screening", `ATH filter removed ${before - eligible.length} pool(s)`);
+    }
+
+    // Drop any pools whose creator is on the dev blocklist (caught via advanced-info)
+    const before = eligible.length;
+    const filtered = eligible.filter((p) => {
+      if (p.dev && isDevBlocked(p.dev)) {
+        log("dev_blocklist", `Filtered blocked deployer (okx) ${p.dev.slice(0, 8)} token ${p.base?.symbol}`);
+        return false;
+      }
+      return true;
+    });
+    eligible.splice(0, eligible.length, ...filtered);
+    if (eligible.length < before) log("dev_blocklist", `Filtered ${before - eligible.length} pool(s) via OKX creator check`);
+  }
 
   return {
     candidates: eligible,
