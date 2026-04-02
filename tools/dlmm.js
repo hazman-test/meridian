@@ -610,18 +610,40 @@ export async function closePosition({ position_address, reason }) {
     }
 
     // ─── Step 2: Remove Liquidity & Close ──────────────────────
-    log("close", `Step 2: Removing liquidity and closing account`);
-    const closeTx = await pool.removeLiquidity({
-      user: wallet.publicKey,
-      position: positionPubKey,
-      fromBinId: -887272,
-      toBinId: 887272,
-      bps: new BN(10000),
-      shouldClaimAndClose: true,
-    });
+    let hasLiquidity = false;
+    try {
+      const positionDataForClose = await pool.getPosition(positionPubKey);
+      const shares = positionDataForClose?.positionData?.liquidityShares;
+      if (Array.isArray(shares) && shares.length > 0) {
+        const totalLiquidity = shares.reduce((sum, share) => sum.add(share), new BN(0));
+        hasLiquidity = totalLiquidity.gt(new BN(0));
+      }
+    } catch (e) {
+      log("close_warn", `Could not check liquidity state: ${e.message}`);
+    }
 
-    for (const tx of Array.isArray(closeTx) ? closeTx : [closeTx]) {
-      const txHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet]);
+    if (hasLiquidity) {
+      log("close", `Step 2: Removing liquidity and closing account`);
+      const closeTx = await pool.removeLiquidity({
+        user: wallet.publicKey,
+        position: positionPubKey,
+        fromBinId: -887272,
+        toBinId: 887272,
+        bps: new BN(10000),
+        shouldClaimAndClose: true,
+      });
+
+      for (const tx of Array.isArray(closeTx) ? closeTx : [closeTx]) {
+        const txHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet]);
+        txHashes.push(txHash);
+      }
+    } else {
+      log("close", `Step 2: Position is empty, closing directly`);
+      const closeTx = await pool.closePositionIfEmpty({
+        owner: wallet.publicKey,
+        position: { publicKey: positionPubKey },
+      });
+      const txHash = await sendAndConfirmTransaction(getConnection(), closeTx, [wallet]);
       txHashes.push(txHash);
     }
     log("close", `SUCCESS txs: ${txHashes.join(", ")}`);
