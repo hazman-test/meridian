@@ -582,8 +582,8 @@ export async function closePosition({ position_address, reason }) {
     const pool = await getPool(poolAddress);
 
     const positionPubKey = new PublicKey(position_address);
-
-    const txHashes = [];
+    const claimTxHashes = [];
+    const closeTxHashes = [];
 
     // ─── Step 1: Claim Fees (to clear account state) ───────────
     const recentlyClaimed = tracked?.last_claim_at && (Date.now() - new Date(tracked.last_claim_at).getTime()) < 60_000;
@@ -600,9 +600,9 @@ export async function closePosition({ position_address, reason }) {
         if (claimTxs && claimTxs.length > 0) {
           for (const tx of claimTxs) {
             const claimHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet]);
-            txHashes.push(claimHash);
+            claimTxHashes.push(claimHash);
           }
-          log("close", `Step 1 OK: ${txHashes.join(", ")}`);
+          log("close", `Step 1 OK (claim only): ${claimTxHashes.join(", ")}`);
         }
       }
     } catch (e) {
@@ -635,7 +635,7 @@ export async function closePosition({ position_address, reason }) {
 
       for (const tx of Array.isArray(closeTx) ? closeTx : [closeTx]) {
         const txHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet]);
-        txHashes.push(txHash);
+        closeTxHashes.push(txHash);
       }
     } else {
       log("close", `Step 2: Position is empty, closing directly`);
@@ -644,8 +644,10 @@ export async function closePosition({ position_address, reason }) {
         position: { publicKey: positionPubKey },
       });
       const txHash = await sendAndConfirmTransaction(getConnection(), closeTx, [wallet]);
-      txHashes.push(txHash);
+      closeTxHashes.push(txHash);
     }
+    const txHashes = [...claimTxHashes, ...closeTxHashes];
+    log("close", `Step 2 OK (close only): ${closeTxHashes.join(", ") || "none"}`);
     log("close", `SUCCESS txs: ${txHashes.join(", ")}`);
     // Wait for RPC to reflect withdrawn balances before returning — prevents
     // agent from seeing zero balance when attempting post-close swap
@@ -674,6 +676,8 @@ export async function closePosition({ position_address, reason }) {
         error: "Close transactions sent but position still appears open after verification window",
         position: position_address,
         pool: poolAddress,
+        claim_txs: claimTxHashes,
+        close_txs: closeTxHashes,
         txs: txHashes,
       };
     }
@@ -755,10 +759,30 @@ export async function closePosition({ position_address, reason }) {
         close_reason: reason || "agent decision",
       });
 
-      return { success: true, position: position_address, pool: poolAddress, pool_name: tracked.pool_name || null, txs: txHashes, pnl_usd: pnlUsd, pnl_pct: pnlPct, base_mint: pool.lbPair.tokenXMint.toString() };
+      return {
+        success: true,
+        position: position_address,
+        pool: poolAddress,
+        pool_name: tracked.pool_name || null,
+        claim_txs: claimTxHashes,
+        close_txs: closeTxHashes,
+        txs: txHashes,
+        pnl_usd: pnlUsd,
+        pnl_pct: pnlPct,
+        base_mint: pool.lbPair.tokenXMint.toString(),
+      };
     }
 
-    return { success: true, position: position_address, pool: poolAddress, pool_name: null, txs: txHashes, base_mint: pool.lbPair.tokenXMint.toString() };
+    return {
+      success: true,
+      position: position_address,
+      pool: poolAddress,
+      pool_name: null,
+      claim_txs: claimTxHashes,
+      close_txs: closeTxHashes,
+      txs: txHashes,
+      base_mint: pool.lbPair.tokenXMint.toString(),
+    };
   } catch (error) {
     log("close_error", error.message);
     return { success: false, error: error.message };

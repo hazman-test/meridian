@@ -745,7 +745,9 @@ if (isTTY) {
         await sendMessage(`Closing ${pos.pair}...`);
         const result = await closePosition({ position_address: pos.position });
         if (result.success) {
-          await sendMessage(`✅ Closed ${pos.pair}\nPnL: ${config.management.solMode ? "◎" : "$"}${result.pnl_usd ?? "?"} | txs: ${result.txs?.join(", ")}`);
+          const closeTxs = result.close_txs?.length ? result.close_txs : result.txs;
+          const claimNote = result.claim_txs?.length ? `\nClaim txs: ${result.claim_txs.join(", ")}` : "";
+          await sendMessage(`✅ Closed ${pos.pair}\nPnL: ${config.management.solMode ? "◎" : "$"}${result.pnl_usd ?? "?"} | close txs: ${closeTxs?.join(", ") || "n/a"}${claimNote}`);
         } else {
           await sendMessage(`❌ Close failed: ${JSON.stringify(result)}`);
         }
