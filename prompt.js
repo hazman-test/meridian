@@ -102,11 +102,11 @@ All candidates are pre-loaded. Your job: pick the highest-conviction candidate a
 
 HARD RULE (no exceptions):
 - fees_sol < ${config.screening.minTokenFeesSol} → SKIP. Low fees = bundled/scam. Smart wallets do NOT override this.
+- bots > ${config.screening.maxBotHoldersPct}% → already hard-filtered before you see the candidate list.
 
 RISK SIGNALS (guidelines — use judgment):
 - top10 > 60% → concentrated, risky
-- bots > 30% → suspicious distribution
-- bots 5–25% → normal, ignore
+- bundle_pct from OKX = secondary context only, not a hard filter
 - rugpull flag from OKX → major negative score penalty and default to SKIP; only override if smart wallets are present and conviction is otherwise high
 - wash trading flag from OKX → treat as disqualifying even if other metrics look attractive
 - no narrative + no smart wallets → skip

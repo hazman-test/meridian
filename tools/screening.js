@@ -165,18 +165,6 @@ export async function getTopCandidates({ limit = 10 } = {}) {
         eligible[i].top_cluster_hold_pct = clusters[0]?.holding_pct ?? null;
       }
     }
-    // Bundle filter — drop pools where OKX bundle % exceeds threshold
-    const maxBundle = config.screening.maxBundlePct;
-    if (maxBundle != null) {
-      eligible.splice(0, eligible.length, ...eligible.filter((p) => {
-        if (p.bundle_pct != null && p.bundle_pct > maxBundle) {
-          log("screening", `Bundle filter: dropped ${p.name} — bundle ${p.bundle_pct}% > ${maxBundle}%`);
-          return false;
-        }
-        return true;
-      }));
-    }
-
     // Wash trading hard filter — fake volume = misleading fee yield
     eligible.splice(0, eligible.length, ...eligible.filter((p) => {
       if (p.is_wash) { log("screening", `Risk filter: dropped ${p.name} — wash trading flagged`); return false; }

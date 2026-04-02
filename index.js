@@ -363,11 +363,17 @@ export async function runScreeningCycle({ silent = false } = {}) {
       await new Promise(r => setTimeout(r, 150)); // avoid 429s
     }
 
-    // Only filter blocked launchpads — everything else is for the LLM to judge
+    // Hard filters after token recon — block launchpads and excessive Jupiter bot holders
     const passing = allCandidates.filter(({ pool, ti }) => {
       const launchpad = ti?.launchpad ?? null;
       if (launchpad && config.screening.blockedLaunchpads.includes(launchpad)) {
         log("screening", `Skipping ${pool.name} — blocked launchpad (${launchpad})`);
+        return false;
+      }
+      const botPct = ti?.audit?.bot_holders_pct;
+      const maxBotHoldersPct = config.screening.maxBotHoldersPct;
+      if (botPct != null && maxBotHoldersPct != null && botPct > maxBotHoldersPct) {
+        log("screening", `Bot-holder filter: dropped ${pool.name} — bots ${botPct}% > ${maxBotHoldersPct}%`);
         return false;
       }
       return true;
