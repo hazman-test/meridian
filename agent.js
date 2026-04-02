@@ -79,6 +79,14 @@ const client = new OpenAI({
 
 const DEFAULT_MODEL = process.env.LLM_MODEL || "openrouter/healer-alpha";
 
+const TOOL_REQUIRED_INTENTS = /\b(deploy|open position|open|add liquidity|lp into|invest in|close|exit|withdraw|remove liquidity|claim|harvest|collect|swap|convert|sell|exchange|block|unblock|blacklist|self.?update|pull latest|git pull|update yourself|config|setting|threshold|set |change|update |balance|wallet|position|portfolio|pnl|yield|range|screen|candidate|find pool|search|research|token|smart wallet|whale|watch.?list|tracked wallet|study top|top lpers?|lp behavior|who.?s lping|performance|history|stats|report|lesson|learned|teach|pin|unpin)\b/i;
+
+function shouldRequireRealToolUse(goal, agentType, requireTool) {
+  if (requireTool) return true;
+  if (agentType === "MANAGER") return false;
+  return TOOL_REQUIRED_INTENTS.test(goal);
+}
+
 /**
  * Core ReAct agent loop.
  *
@@ -86,7 +94,8 @@ const DEFAULT_MODEL = process.env.LLM_MODEL || "openrouter/healer-alpha";
  * @param {number} maxSteps - Safety limit on iterations (default 20)
  * @returns {string} - The agent's final text response
  */
-export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHistory = [], agentType = "GENERAL", model = null, maxOutputTokens = null) {
+export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHistory = [], agentType = "GENERAL", model = null, maxOutputTokens = null, options = {}) {
+  const { requireTool = false } = options;
   // Build dynamic system prompt with current portfolio state
   const [portfolio, positions] = await Promise.all([getWalletBalances(), getMyPositions()]);
   const stateSummary = getStateSummary();
@@ -106,6 +115,9 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
   // These lock after first attempt regardless of success — retrying them is always wrong
   const NO_RETRY_TOOLS = new Set(["deploy_position"]);
   const firedOnce = new Set();
+  const mustUseRealTool = shouldRequireRealToolUse(goal, agentType, requireTool);
+  let sawToolCall = false;
+  let noToolRetryCount = 0;
 
   let emptyStreak = 0;
   for (let step = 0; step < maxSteps; step++) {
@@ -120,7 +132,7 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
       let usedModel = activeModel;
       // Force a tool call on step 0 for action intents — prevents the model from inventing deploy/close outcomes
       const ACTION_INTENTS = /\b(deploy|open|add liquidity|close|exit|withdraw|claim|swap|block|unblock)\b/i;
-      const toolChoice = (step === 0 && ACTION_INTENTS.test(goal)) ? "required" : "auto";
+      const toolChoice = (step === 0 && (ACTION_INTENTS.test(goal) || mustUseRealTool)) ? "required" : "auto";
 
       for (let attempt = 0; attempt < 3; attempt++) {
         response = await client.chat.completions.create({
@@ -181,10 +193,27 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
           log("agent", "Empty response, retrying...");
           continue;
         }
+        if (mustUseRealTool && !sawToolCall) {
+          noToolRetryCount += 1;
+          messages.pop();
+          log("agent", `Rejected no-tool final answer (${noToolRetryCount}/2) for tool-required request`);
+          if (noToolRetryCount >= 2) {
+            return {
+              content: "I couldn't complete that reliably because no tool call was made. Please retry after checking the logs.",
+              userMessage: goal,
+            };
+          }
+          messages.push({
+            role: "system",
+            content: "You have not used any tool yet. This request requires real tool execution or live tool-backed data. Do not answer from memory or inference. Call the appropriate tool first, then report only the real result.",
+          });
+          continue;
+        }
         log("agent", "Final answer reached");
         log("agent", msg.content);
         return { content: msg.content, userMessage: goal };
       }
+      sawToolCall = true;
 
       // Execute each tool call in parallel
       const toolResults = await Promise.all(msg.tool_calls.map(async (toolCall) => {

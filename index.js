@@ -776,7 +776,7 @@ if (isTTY) {
       const isDeployRequest = !hasCloseIntent && /\bdeploy\b|\bopen position\b|\blp into\b|\badd liquidity\b/i.test(text);
       const agentRole = isDeployRequest ? "SCREENER" : "GENERAL";
       const agentModel = agentRole === "SCREENER" ? config.llm.screeningModel : config.llm.generalModel;
-      const { content } = await agentLoop(text, config.llm.maxSteps, sessionHistory, agentRole, agentModel);
+      const { content } = await agentLoop(text, config.llm.maxSteps, sessionHistory, agentRole, agentModel, null, { requireTool: true });
       appendHistory(text, content);
       await sendMessage(stripThink(content));
     } catch (e) {
@@ -991,7 +991,7 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
     // ── Free-form chat ───────────────────────
     await runBusy(async () => {
       log("user", input);
-      const { content } = await agentLoop(input, config.llm.maxSteps, sessionHistory, "GENERAL", config.llm.generalModel);
+      const { content } = await agentLoop(input, config.llm.maxSteps, sessionHistory, "GENERAL", config.llm.generalModel, null, { requireTool: true });
       appendHistory(input, content);
       console.log(`\n${content}\n`);
     });
