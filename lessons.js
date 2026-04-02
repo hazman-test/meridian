@@ -60,6 +60,22 @@ function save(data) {
 export async function recordPerformance(perf) {
   const data = load();
 
+  // Guard against unit-mixed records where a SOL-sized final value is
+  // accidentally written into a USD field (e.g. final_value_usd = 2 for a 2 SOL close).
+  const suspiciousUnitMix =
+    Number.isFinite(perf.initial_value_usd) &&
+    Number.isFinite(perf.final_value_usd) &&
+    Number.isFinite(perf.amount_sol) &&
+    perf.initial_value_usd >= 20 &&
+    perf.amount_sol >= 0.25 &&
+    perf.final_value_usd > 0 &&
+    perf.final_value_usd <= perf.amount_sol * 2;
+
+  if (suspiciousUnitMix) {
+    log("lessons_warn", `Skipped suspicious performance record for ${perf.pool_name || perf.pool}: initial=${perf.initial_value_usd}, final=${perf.final_value_usd}, amount_sol=${perf.amount_sol}`);
+    return;
+  }
+
   const pnl_usd = (perf.final_value_usd + perf.fees_earned_usd) - perf.initial_value_usd;
   const pnl_pct = perf.initial_value_usd > 0
     ? (pnl_usd / perf.initial_value_usd) * 100

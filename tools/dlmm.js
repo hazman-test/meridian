@@ -416,13 +416,22 @@ export async function getMyPositions({ force = false, silent = false } = {}) {
               ? parseFloat(binData.unrealizedPnl?.balancesSol || 0)
               : parseFloat(binData.unrealizedPnl?.balances || 0)
             : parseFloat(config.management.solMode ? (pool.balancesSol || 0) : (pool.balances || 0))) * 10000) / 10000,
+          // Always-USD fields for internal accounting and lesson recording.
+          total_value_true_usd: Math.round((binData
+            ? parseFloat(binData.unrealizedPnl?.balances || 0)
+            : parseFloat(pool.balances || 0)) * 10000) / 10000,
           collected_fees_usd: Math.round(parseFloat(config.management.solMode ? (binData?.allTimeFees?.total?.sol || 0) : (binData?.allTimeFees?.total?.usd || 0)) * 10000) / 10000,
+          collected_fees_true_usd: Math.round(parseFloat(binData?.allTimeFees?.total?.usd || 0) * 10000) / 10000,
           pnl_usd:            Math.round(parseFloat(binData
             ? config.management.solMode ? (binData.pnlSol || 0) : (binData.pnlUsd || 0)
             : config.management.solMode ? (pool.pnlSol || 0) : (pool.pnl || 0)) * 10000) / 10000,
+          pnl_true_usd:       Math.round(parseFloat(binData?.pnlUsd || 0) * 10000) / 10000,
           pnl_pct:            Math.round(parseFloat(binData
             ? config.management.solMode ? (binData.pnlSolPctChange || 0) : (binData.pnlPctChange || 0)
             : config.management.solMode ? (pool.pnlSolPctChange || 0) : (pool.pnlPctChange || 0)) * 100) / 100,
+          unclaimed_fees_true_usd: Math.round((binData
+            ? parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenX?.usd || 0) + parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenY?.usd || 0)
+            : parseFloat(pool.unclaimedFees || 0)) * 10000) / 10000,
           fee_per_tvl_24h:    Math.round(parseFloat(binData?.feePerTvl24h || pool.feePerTvl24h || 0) * 100) / 100,
           age_minutes:        binData?.createdAt ? Math.floor((Date.now() - binData.createdAt * 1000) / 60000) : ageFromState,
           minutes_out_of_range: minutesOutOfRange(positionAddress),
@@ -728,16 +737,16 @@ export async function closePosition({ position_address, reason }) {
       if (finalValueUsd === 0) {
         const cachedPos = _positionsCache?.positions?.find(p => p.position === position_address);
         if (cachedPos) {
-          pnlUsd        = cachedPos.pnl_usd   ?? 0;
+          pnlUsd        = cachedPos.pnl_true_usd ?? cachedPos.pnl_usd ?? 0;
           pnlPct        = cachedPos.pnl_pct   ?? 0;
-          feesUsd       = (cachedPos.collected_fees_usd || 0) + (cachedPos.unclaimed_fees_usd || 0);
+          feesUsd       = (cachedPos.collected_fees_true_usd || 0) + (cachedPos.unclaimed_fees_true_usd || 0);
           initialUsd    = tracked.initial_value_usd || 0;
           if (initialUsd > 0) {
-            // Keep fallback internally consistent with cached pnl instead of stale balance snapshots.
+            // Keep fallback internally consistent using USD-only cached metrics.
             finalValueUsd = Math.max(0, initialUsd + pnlUsd - feesUsd);
             pnlPct = (pnlUsd / initialUsd) * 100;
           } else {
-            finalValueUsd = cachedPos.total_value_usd ?? 0;
+            finalValueUsd = cachedPos.total_value_true_usd ?? cachedPos.total_value_usd ?? 0;
             initialUsd = Math.max(0, finalValueUsd + feesUsd - pnlUsd);
           }
           log("close_warn", `Using cached pnl fallback because closed API has not settled yet`);
