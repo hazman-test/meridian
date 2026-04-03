@@ -425,6 +425,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
         pool.is_rugpull != null ? `rugpull=${pool.is_rugpull ? "YES" : "NO"}` : null,
         pool.is_wash != null ? `wash=${pool.is_wash ? "YES" : "NO"}` : null,
       ].filter(Boolean).join(", ");
+      const okxUnavailable = !okxParts && pool.price_vs_ath_pct == null;
 
       const okxTags = [
         pool.smart_money_buy    ? "smart_money_buy"    : null,
@@ -438,7 +439,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
         `POOL: ${pool.name} (${pool.pool})`,
         `  metrics: bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
         `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
-        okxParts ? `  okx: ${okxParts}` : null,
+        okxParts ? `  okx: ${okxParts}` : okxUnavailable ? `  okx: unavailable` : null,
         okxTags  ? `  tags: ${okxTags}` : null,
         pool.price_vs_ath_pct != null ? `  ath: price_vs_ath=${pool.price_vs_ath_pct}%${pool.top_cluster_trend ? `, top_cluster=${pool.top_cluster_trend}` : ""}` : null,
         `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map(w => w.name).join(", ")})` : ""}`,
@@ -464,22 +465,53 @@ STEPS:
 2. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
    bins_below = round(35 + (volatility/5)*55) clamped to [35,90].
 3. Report in this exact format (no tables, no extra sections):
-   Decision: DEPLOYED PAIR
-   pool: <name> | <pool address>
-   amount: <deploy amount> SOL | strategy=<strategy> | active_bin=<bin>
-   metrics: bin_step=X | fee=X% | fee_tvl=X% | volume=$X | tvl=$X | volatility=X | organic=X | mcap=$X
-   holder_audit: top10=X% | bots=X% | fees=XSOL | token_age=Xh
-   okx: risk=X | bundle=X% | sniper=X% | suspicious=X% | ath=X% | rugpull=Y/N | wash=Y/N
-   smart_wallets: <names or none>
-   range: minPrice→maxPrice (downside=(minPrice/maxPrice-1)*100%)
-   narrative: <1-2 sentences on what the token/pool is and why it has attention>
-   analysis: <2-4 sentences covering why this setup is attractive right now, key risks, and what outweighed the alternatives>
-   reason: <one decisive sentence explaining why this pool won over the rest>
-   rejected: <one short sentence on why the next best alternatives were passed over>
+   🚀 DEPLOYED
+
+   <pool name>
+   <pool address>
+
+   ◎ <deploy amount> SOL | <strategy> | bin <active_bin>
+   Range: <minPrice> → <maxPrice>
+   Downside buffer: <negative %>
+
+   MARKET
+   Fee/TVL: <x>%
+   Volume: $<x>
+   TVL: $<x>
+   Volatility: <x>
+   Organic: <x>
+   Mcap: $<x>
+   Age: <x>h
+
+   AUDIT
+   Top10: <x>%
+   Bots: <x>%
+   Fees paid: <x> SOL
+   Smart wallets: <names or none>
+
+   RISK
+   <If OKX advanced/risk data exists, list only the fields that actually exist: Risk level, Bundle, Sniper, Suspicious, ATH distance, Rugpull, Wash.>
+   <If only rugpull/wash exist, list just those.>
+   <If OKX enrichment is missing, write exactly: OKX: unavailable>
+
+   WHY THIS WON
+   <2-4 concise sentences on why this pool won, key risks, and why it still beat the alternatives>
 4. If no pool qualifies, report in this exact format instead:
-   Decision: NO DEPLOY
-   analysis: <2-4 sentences explaining why current candidates were rejected>
-   rejected: <short semicolon-separated reasons for the top candidates that were skipped>
+   ⛔ NO DEPLOY
+
+   Cycle finished with no valid entry.
+
+   BEST LOOKING CANDIDATE
+   <name or none>
+
+   WHY SKIPPED
+   <2-4 concise sentences explaining why nothing was good enough>
+
+   REJECTED
+   <short flat list of top candidate names and why they were skipped>
+IMPORTANT:
+- Never write "unknown" for OKX. Use real values, omit missing fields, or write exactly "OKX: unavailable".
+- Keep the whole report compact and highly scannable for Telegram.
       `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048, {
         onToolStart: async ({ name }) => { await liveMessage?.toolStart(name); },
         onToolFinish: async ({ name, result, success }) => { await liveMessage?.toolFinish(name, result, success); },
