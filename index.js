@@ -323,9 +323,6 @@ export async function runScreeningCycle({ silent = false } = {}) {
   let liveMessage = null;
   let screenReport = null;
   try {
-    if (!silent && telegramEnabled()) {
-      liveMessage = await createLiveMessage("🔍 Screening Cycle", "Scanning candidates...");
-    }
     [prePositions, preBalance] = await Promise.all([getMyPositions({ force: true }), getWalletBalances()]);
     if (prePositions.total_positions >= config.risk.maxPositions) {
       log("cron", `Screening skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions})`);
@@ -340,8 +337,11 @@ export async function runScreeningCycle({ silent = false } = {}) {
     }
   } catch (e) {
     log("cron_error", `Screening pre-check failed: ${e.message}`);
-    screenReport = `Screening pre-check failed: ${e.message}`;
-    return screenReport;
+      screenReport = `Screening pre-check failed: ${e.message}`;
+      return screenReport;
+  }
+  if (!silent && telegramEnabled()) {
+    liveMessage = await createLiveMessage("🔍 Screening Cycle", "Scanning candidates...");
   }
   timers.screeningLastRun = Date.now();
   log("cron", `Starting screening cycle [model: ${config.llm.screeningModel}]`);
