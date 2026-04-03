@@ -3,29 +3,62 @@
  * Uses Ok-Access-Client-type: agent-cli header for unauthenticated access.
  * Docs: https://web3.okx.com/build/dev-docs/
  */
+import crypto from "crypto";
 
 const BASE = "https://web3.okx.com";
 const CHAIN_SOLANA = "501";
 const PUBLIC_HEADERS = { "Ok-Access-Client-type": "agent-cli" };
+const OKX_API_KEY = process.env.OKX_API_KEY || process.env.OK_ACCESS_KEY || "";
+const OKX_SECRET_KEY = process.env.OKX_SECRET_KEY || process.env.OK_ACCESS_SECRET || "";
+const OKX_PASSPHRASE = process.env.OKX_PASSPHRASE || process.env.OK_ACCESS_PASSPHRASE || "";
+const OKX_PROJECT_ID = process.env.OKX_PROJECT_ID || process.env.OK_ACCESS_PROJECT || "";
 
-async function okxGet(path) {
-  const res = await fetch(`${BASE}${path}`, { headers: PUBLIC_HEADERS });
-  if (!res.ok) throw new Error(`OKX API ${res.status}: ${path}`);
-  const json = await res.json();
-  if (json.code !== "0" && json.code !== 0) throw new Error(`OKX error ${json.code}: ${json.msg}`);
-  return json.data;
+function hasAuth() {
+  return !!(OKX_API_KEY && OKX_SECRET_KEY && OKX_PASSPHRASE && !/enter your passphrase here/i.test(OKX_PASSPHRASE));
 }
 
-async function okxPost(path, body) {
+function buildAuthHeaders(method, path, body = "") {
+  const timestamp = new Date().toISOString();
+  const prehash = `${timestamp}${method.toUpperCase()}${path}${body}`;
+  const sign = crypto
+    .createHmac("sha256", OKX_SECRET_KEY)
+    .update(prehash)
+    .digest("base64");
+
+  const headers = {
+    "OK-ACCESS-KEY": OKX_API_KEY,
+    "OK-ACCESS-SIGN": sign,
+    "OK-ACCESS-PASSPHRASE": OKX_PASSPHRASE,
+    "OK-ACCESS-TIMESTAMP": timestamp,
+  };
+
+  if (OKX_PROJECT_ID) headers["OK-ACCESS-PROJECT"] = OKX_PROJECT_ID;
+  return headers;
+}
+
+async function okxRequest(method, path, body = null) {
+  const bodyText = body == null ? "" : JSON.stringify(body);
+  const headers = hasAuth()
+    ? { ...buildAuthHeaders(method, path, bodyText), ...(body != null ? { "Content-Type": "application/json" } : {}) }
+    : { ...PUBLIC_HEADERS, ...(body != null ? { "Content-Type": "application/json" } : {}) };
+
   const res = await fetch(`${BASE}${path}`, {
-    method: "POST",
-    headers: { ...PUBLIC_HEADERS, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    method,
+    headers,
+    ...(body != null ? { body: bodyText } : {}),
   });
   if (!res.ok) throw new Error(`OKX API ${res.status}: ${path}`);
   const json = await res.json();
-  if (json.code !== "0" && json.code !== 0) throw new Error(`OKX error ${json.code}: ${json.msg}`);
+  if (json.code !== "0" && json.code !== 0) throw new Error(`OKX error ${json.code}: ${json.msg || json.message || "unknown"}`);
   return json.data;
+}
+
+async function okxGet(path) {
+  return okxRequest("GET", path);
+}
+
+async function okxPost(path, body) {
+  return okxRequest("POST", path, body);
 }
 
 const pct = (v) => v != null && v !== "" ? parseFloat(v) : null;
