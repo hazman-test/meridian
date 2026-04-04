@@ -52,6 +52,7 @@
   "trailingTakeProfit": true,
   "trailingTriggerPct": 3,
   "trailingDropPct": 1.5,
+  "pnlSanityMaxDiffPct": 5,
   "solMode": false,
 
   "managementIntervalMin": 10,

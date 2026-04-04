@@ -352,6 +352,36 @@ export async function getPositionPnl({ pool_address, position_address }) {
   }
 }
 
+function safeNum(value) {
+  const n = parseFloat(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function deriveOpenPnlPct(binData, solMode = false) {
+  if (!binData) return null;
+
+  const deposit = solMode
+    ? safeNum(binData.allTimeDeposits?.total?.sol)
+    : safeNum(binData.allTimeDeposits?.total?.usd);
+  if (deposit <= 0) return null;
+
+  const balances = solMode
+    ? safeNum(binData.unrealizedPnl?.balancesSol)
+    : safeNum(binData.unrealizedPnl?.balances);
+  const unclaimedFees = solMode
+    ? safeNum(binData.unrealizedPnl?.unclaimedFeeTokenX?.amountSol) + safeNum(binData.unrealizedPnl?.unclaimedFeeTokenY?.amountSol)
+    : safeNum(binData.unrealizedPnl?.unclaimedFeeTokenX?.usd) + safeNum(binData.unrealizedPnl?.unclaimedFeeTokenY?.usd);
+  const withdrawals = solMode
+    ? safeNum(binData.allTimeWithdrawals?.total?.sol)
+    : safeNum(binData.allTimeWithdrawals?.total?.usd);
+  const fees = solMode
+    ? safeNum(binData.allTimeFees?.total?.sol)
+    : safeNum(binData.allTimeFees?.total?.usd);
+
+  const pnl = balances + unclaimedFees + withdrawals + fees - deposit;
+  return (pnl / deposit) * 100;
+}
+
 // ─── Get My Positions ──────────────────────────────────────────
 export async function getMyPositions({ force = false, silent = false } = {}) {
   if (!force && _positionsCache && Date.now() - _positionsCacheAt < POSITIONS_CACHE_TTL) {
@@ -404,6 +434,17 @@ export async function getMyPositions({ force = false, silent = false } = {}) {
         const ageFromState = tracked?.deployed_at
           ? Math.floor((Date.now() - new Date(tracked.deployed_at).getTime()) / 60000)
           : null;
+        const reportedPnlPct = binData
+          ? parseFloat(config.management.solMode ? (binData.pnlSolPctChange || 0) : (binData.pnlPctChange || 0))
+          : null;
+        const derivedPnlPct = binData ? deriveOpenPnlPct(binData, config.management.solMode) : null;
+        const pnlPctDiff = reportedPnlPct != null && derivedPnlPct != null
+          ? Math.abs(reportedPnlPct - derivedPnlPct)
+          : null;
+        const pnlPctSuspicious = pnlPctDiff != null && pnlPctDiff > (config.management.pnlSanityMaxDiffPct ?? 5);
+        if (pnlPctSuspicious) {
+          log("positions_warn", `Suspicious pnl_pct for ${positionAddress.slice(0, 8)}: reported=${reportedPnlPct.toFixed(2)} derived=${derivedPnlPct.toFixed(2)} diff=${pnlPctDiff.toFixed(2)}`);
+        }
 
         positions.push({
           position:           positionAddress,
@@ -445,8 +486,11 @@ export async function getMyPositions({ force = false, silent = false } = {}) {
             ? Math.round(parseFloat(binData.pnlUsd || 0) * 10000) / 10000
             : null,
           pnl_pct:            binData
-            ? Math.round(parseFloat(config.management.solMode ? (binData.pnlSolPctChange || 0) : (binData.pnlPctChange || 0)) * 100) / 100
+            ? Math.round(reportedPnlPct * 100) / 100
             : null,
+          pnl_pct_derived:    derivedPnlPct != null ? Math.round(derivedPnlPct * 100) / 100 : null,
+          pnl_pct_diff:       pnlPctDiff != null ? Math.round(pnlPctDiff * 100) / 100 : null,
+          pnl_pct_suspicious: !!pnlPctSuspicious,
           unclaimed_fees_true_usd: binData
             ? Math.round((parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenX?.usd || 0) + parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenY?.usd || 0)) * 10000) / 10000
             : null,
