@@ -504,7 +504,7 @@ STEPS:
    IMPORTANT: amount_y MUST be a single number. 
    Calculate it as the SMALLEST of:
    - ${maxPossibleDeploy} (your max allocation)
-   - ${config.risk.maxPoolExposurePct * 100}% of the pool's active_tvl ($${pool.active_tvl})
+   - ${config.risk.maxPoolExposurePct * 100}% of the pool's active_tvl (look for 'tvl' in the metrics above)
    Note: If 2% of TVL is less than 0.1 SOL, you may skip the pool as being too small.
    bins_below = round(35 + (volatility/5)*55) clamped to [35, ${config.strategy.binsBelow}].
 
