@@ -501,10 +501,13 @@ ${candidateBlocks.join("\n\n")}
 STEPS:
 1. Pick the best candidate based on narrative quality, smart wallets, and pool metrics.
 2. Call deploy_position. 
-   IMPORTANT: Set amount_y to the SMALLEST of:
-   - ${maxPossibleDeploy} SOL (your standard allocation)
-   - ${config.risk.maxPoolExposurePct * 100}% of the pool's active_tvl (to avoid whale risk)
+   IMPORTANT: amount_y MUST be a single number. 
+   Calculate it as the SMALLEST of:
+   - ${maxPossibleDeploy} (your max allocation)
+   - ${config.risk.maxPoolExposurePct * 100}% of the pool's active_tvl ($${pool.active_tvl})
+   Note: If 2% of TVL is less than 0.1 SOL, you may skip the pool as being too small.
    bins_below = round(35 + (volatility/5)*55) clamped to [35, ${config.strategy.binsBelow}].
+
 3. Report in this exact format (no tables, no extra sections):
    🚀 DEPLOYED
 
