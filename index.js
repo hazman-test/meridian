@@ -219,21 +219,21 @@ export async function runManagementCycle({ silent = false } = {}) {
       }
       // Rule 3: pumped far above range
       if (p.active_bin != null && p.upper_bin != null &&
-        p.active_bin > p.upper_bin + config.management.outOfRangeBinsToClose) {
+          p.active_bin > p.upper_bin + config.management.outOfRangeBinsToClose) {
         actionMap.set(p.position, { action: "CLOSE", rule: 3, reason: "pumped far above range" });
         continue;
       }
       // Rule 4: stale above range
       if (p.active_bin != null && p.upper_bin != null &&
-        p.active_bin > p.upper_bin &&
-        (p.minutes_out_of_range ?? 0) >= config.management.outOfRangeWaitMinutes) {
+          p.active_bin > p.upper_bin &&
+          (p.minutes_out_of_range ?? 0) >= config.management.outOfRangeWaitMinutes) {
         actionMap.set(p.position, { action: "CLOSE", rule: 4, reason: "OOR" });
         continue;
       }
       // Rule 5: fee yield too low
       if (p.fee_per_tvl_24h != null &&
-        p.fee_per_tvl_24h < config.management.minFeePerTvl24h &&
-        (p.age_minutes ?? 0) >= 60) {
+          p.fee_per_tvl_24h < config.management.minFeePerTvl24h &&
+          (p.age_minutes ?? 0) >= 60) {
         actionMap.set(p.position, { action: "CLOSE", rule: 5, reason: "low yield" });
         continue;
       }
@@ -331,7 +331,7 @@ After executing, write a brief one-line result per position.
     _managementBusy = false;
     if (!silent && telegramEnabled()) {
       if (mgmtReport) {
-        if (liveMessage) await liveMessage.finalize(stripThink(mgmtReport)).catch(() => { });
+        if (liveMessage) await liveMessage.finalize(stripThink(mgmtReport)).catch(() => {});
         else sendMessage(`🔄 Management Cycle\n\n${stripThink(mgmtReport)}`).catch(() => { });
       }
       for (const p of positions) {
@@ -389,21 +389,6 @@ export async function runScreeningCycle({ silent = false } = {}) {
     const maxPossibleDeploy = computeDeployAmount(currentBalance.sol);
     log("cron", `Computed maximum deploy amount: ${maxPossibleDeploy} SOL (wallet: ${currentBalance.sol} SOL)`);
 
-    // ─── DYNAMIC BIN SCALING ──────────────────────────────────────────
-    // BINS_PER_SOL defines target liquidity density (20 bins per 1 SOL = 0.05 SOL/bin).
-    // This ensures small deployments concentrate capital while large ones maintain range.
-    const BINS_PER_SOL = 20;
-    const capitalAdjustedMaxBins = Math.floor(maxPossibleDeploy * BINS_PER_SOL);
-
-    // Calculate bins_below based on volatility, capital capacity, and config ceiling
-    let bins_below = Math.min(
-      Math.round(35 + (volatility / 5) * 55),
-      capitalAdjustedMaxBins,
-      config.strategy.binsBelow
-    );
-    bins_below = Math.max(20, bins_below); // Absolute floor for strategy functionality
-    // ──────────────────────────────────────────────────────────────────
-
     // Load active strategy
     const activeStrategy = getActiveStrategy();
     const strategyBlock = activeStrategy
@@ -460,6 +445,21 @@ export async function runScreeningCycle({ silent = false } = {}) {
 
     // Build compact candidate blocks
     const candidateBlocks = passing.map(({ pool, sw, n, ti, mem }, i) => {
+      // ─── DYNAMIC BIN SCALING (CALCULATED PER POOL) ──────────────────
+      // BINS_PER_SOL defines target liquidity density (20 bins per 1 SOL = 0.05 SOL/bin).
+      // This ensures small deployments concentrate capital while large ones maintain range.
+      const BINS_PER_SOL = 20; 
+      const capitalAdjustedMaxBins = Math.floor(maxPossibleDeploy * BINS_PER_SOL);
+      const poolVolatility = pool.volatility || 0; 
+      
+      const dynamicBinsBelow = Math.min(
+          Math.round(35 + (poolVolatility / 5) * 55), 
+          capitalAdjustedMaxBins,                 
+          config.strategy.binsBelow               
+      );
+      const finalBinsBelow = Math.max(20, dynamicBinsBelow);
+      // ────────────────────────────────────────────────────────────────
+
       const botPct = ti?.audit?.bot_holders_pct ?? "?";
       const top10Pct = ti?.audit?.top_holders_pct ?? "?";
       const feesSol = ti?.global_fees_sol ?? "?";
@@ -470,30 +470,30 @@ export async function runScreeningCycle({ silent = false } = {}) {
 
       // OKX signals
       const okxParts = [
-        pool.risk_level != null ? `risk=${pool.risk_level}` : null,
-        pool.bundle_pct != null ? `bundle=${pool.bundle_pct}%` : null,
-        pool.sniper_pct != null ? `sniper=${pool.sniper_pct}%` : null,
-        pool.suspicious_pct != null ? `suspicious=${pool.suspicious_pct}%` : null,
-        pool.new_wallet_pct != null ? `new_wallets=${pool.new_wallet_pct}%` : null,
+        pool.risk_level     != null ? `risk=${pool.risk_level}`               : null,
+        pool.bundle_pct     != null ? `bundle=${pool.bundle_pct}%`            : null,
+        pool.sniper_pct     != null ? `sniper=${pool.sniper_pct}%`            : null,
+        pool.suspicious_pct != null ? `suspicious=${pool.suspicious_pct}%`    : null,
+        pool.new_wallet_pct != null ? `new_wallets=${pool.new_wallet_pct}%`   : null,
         pool.is_rugpull != null ? `rugpull=${pool.is_rugpull ? "YES" : "NO"}` : null,
         pool.is_wash != null ? `wash=${pool.is_wash ? "YES" : "NO"}` : null,
       ].filter(Boolean).join(", ");
       const okxUnavailable = !okxParts && pool.price_vs_ath_pct == null;
 
       const okxTags = [
-        pool.smart_money_buy ? "smart_money_buy" : null,
-        pool.kol_in_clusters ? "kol_in_clusters" : null,
-        pool.dex_boost ? "dex_boost" : null,
-        pool.dex_screener_paid ? "dex_screener_paid" : null,
-        pool.dev_sold_all ? "dev_sold_all(bullish)" : null,
+        pool.smart_money_buy    ? "smart_money_buy"    : null,
+        pool.kol_in_clusters    ? "kol_in_clusters"    : null,
+        pool.dex_boost          ? "dex_boost"          : null,
+        pool.dex_screener_paid  ? "dex_screener_paid"  : null,
+        pool.dev_sold_all       ? "dev_sold_all(bullish)" : null,
       ].filter(Boolean).join(", ");
 
       const block = [
         `POOL: ${pool.name} (${pool.pool})`,
-        `  metrics: bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
+        `  metrics: bins_below_target=${finalBinsBelow}, bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${poolVolatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
         `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
         okxParts ? `  okx: ${okxParts}` : okxUnavailable ? `  okx: unavailable` : null,
-        okxTags ? `  tags: ${okxTags}` : null,
+        okxTags  ? `  tags: ${okxTags}` : null,
         pool.price_vs_ath_pct != null ? `  ath: price_vs_ath=${pool.price_vs_ath_pct}%${pool.top_cluster_trend ? `, top_cluster=${pool.top_cluster_trend}` : ""}` : null,
         `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map(w => w.name).join(", ")})` : ""}`,
         activeBin != null ? `  active_bin: ${activeBin}` : null,
@@ -506,8 +506,6 @@ export async function runScreeningCycle({ silent = false } = {}) {
     });
 
     const { content } = await agentLoop(`
-
-
 SCREENING CYCLE
 ${strategyBlock}
 Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | Deploy: ${maxPossibleDeploy} SOL
@@ -523,7 +521,9 @@ STEPS:
    - ${maxPossibleDeploy} (your max allocation)
    - ${config.risk.maxPoolExposurePct * 100}% of the pool's active_tvl (look for 'tvl' in the metrics above)
    Note: If 2% of TVL is less than 0.1 SOL, you may skip the pool as being too small.
-   bins_below = ${bins_below}. // Updated to use the dynamic variable
+   
+   RANGE CALCULATION:
+   - Set bins_below EXACTLY to the 'bins_below_target' value provided in the metrics block for your chosen pool.
 
 3. Report in this exact format (no tables, no extra sections):
    🚀 DEPLOYED
@@ -574,9 +574,9 @@ IMPORTANT:
 - Never write "unknown" for OKX. Use real values, omit missing fields, or write exactly "OKX: unavailable".
 - Keep the whole report compact and highly scannable for Telegram.
       `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048, {
-      onToolStart: async ({ name }) => { await liveMessage?.toolStart(name); },
-      onToolFinish: async ({ name, result, success }) => { await liveMessage?.toolFinish(name, result, success); },
-    });
+        onToolStart: async ({ name }) => { await liveMessage?.toolStart(name); },
+        onToolFinish: async ({ name, result, success }) => { await liveMessage?.toolFinish(name, result, success); },
+      });
     screenReport = content;
   } catch (error) {
     log("cron_error", `Screening cycle failed: ${error.message}`);
@@ -585,7 +585,7 @@ IMPORTANT:
     _screeningBusy = false;
     if (!silent && telegramEnabled()) {
       if (screenReport) {
-        if (liveMessage) await liveMessage.finalize(stripThink(screenReport)).catch(() => { });
+        if (liveMessage) await liveMessage.finalize(stripThink(screenReport)).catch(() => {});
         else sendMessage(`🔍 Screening Cycle\n\n${stripThink(screenReport)}`).catch(() => { });
       }
     }
@@ -698,7 +698,7 @@ function formatCandidates(candidates) {
   });
 
   return [
-    "  #   pool                  fee/aTVL     vol    in-range  organic",
+    "  #  pool                   fee/aTVL     vol    in-range  organic",
     "  " + "─".repeat(68),
     ...lines,
   ].join("\n");
@@ -765,7 +765,7 @@ if (isTTY) {
   // ── Startup: show wallet + top candidates ──
   console.log(`
 ╔═══════════════════════════════════════════╗
-║         DLMM LP Agent — Ready             ║
+║      DLMM LP Agent — Ready                ║
 ╚═══════════════════════════════════════════╝
 `);
 
@@ -822,9 +822,9 @@ if (isTTY) {
     if (_managementBusy || _screeningBusy || busy) {
       if (_telegramQueue.length < 5) {
         _telegramQueue.push(msg);
-        sendMessage(`⏳ Queued (${_telegramQueue.length} in queue): "${text.slice(0, 60)}"`).catch(() => { });
+        sendMessage(`⏳ Queued (${_telegramQueue.length} in queue): "${text.slice(0, 60)}"`).catch(() => {});
       } else {
-        sendMessage("Queue is full (5 messages). Wait for the agent to finish.").catch(() => { });
+        sendMessage("Queue is full (5 messages). Wait for the agent to finish.").catch(() => {});
       }
       return;
     }
@@ -908,13 +908,13 @@ if (isTTY) {
       if (liveMessage) await liveMessage.finalize(stripThink(content));
       else await sendMessage(stripThink(content));
     } catch (e) {
-      if (liveMessage) await liveMessage.fail(e.message).catch(() => { });
+      if (liveMessage) await liveMessage.fail(e.message).catch(() => {});
       else await sendMessage(`Error: ${e.message}`).catch(() => { });
     } finally {
       busy = false;
       rl.setPrompt(buildPrompt());
       rl.prompt(true);
-      drainTelegramQueue().catch(() => { });
+      drainTelegramQueue().catch(() => {});
     }
   }
 
@@ -1025,16 +1025,16 @@ Commands:
       const s = config.screening;
       console.log("\nCurrent screening thresholds:");
       console.log(`  minFeeActiveTvlRatio: ${s.minFeeActiveTvlRatio}`);
-      console.log(`  minOrganic:           ${s.minOrganic}`);
-      console.log(`  minHolders:           ${s.minHolders}`);
-      console.log(`  minTvl:               ${s.minTvl}`);
-      console.log(`  maxTvl:               ${s.maxTvl}`);
-      console.log(`  minVolume:            ${s.minVolume}`);
-      console.log(`  minTokenFeesSol:      ${s.minTokenFeesSol}`);
-      console.log(`  maxBundlePct:         ${s.maxBundlePct}`);
-      console.log(`  maxBotHoldersPct:     ${s.maxBotHoldersPct}`);
-      console.log(`  maxTop10Pct:          ${s.maxTop10Pct}`);
-      console.log(`  timeframe:            ${s.timeframe}`);
+      console.log(`  minOrganic:            ${s.minOrganic}`);
+      console.log(`  minHolders:            ${s.minHolders}`);
+      console.log(`  minTvl:                ${s.minTvl}`);
+      console.log(`  maxTvl:                ${s.maxTvl}`);
+      console.log(`  minVolume:             ${s.minVolume}`);
+      console.log(`  minTokenFeesSol:       ${s.minTokenFeesSol}`);
+      console.log(`  maxBundlePct:          ${s.maxBundlePct}`);
+      console.log(`  maxBotHoldersPct:      ${s.maxBotHoldersPct}`);
+      console.log(`  maxTop10Pct:           ${s.maxTop10Pct}`);
+      console.log(`  timeframe:             ${s.timeframe}`);
       const perf = getPerformanceSummary();
       if (perf) {
         console.log(`\n  Based on ${perf.total_positions_closed} closed positions`);
