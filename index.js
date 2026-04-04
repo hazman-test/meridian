@@ -386,8 +386,8 @@ export async function runScreeningCycle({ silent = false } = {}) {
   try {
     // Reuse pre-fetched balance — no extra RPC call needed
     const currentBalance = preBalance;
-    const deployAmount = computeDeployAmount(currentBalance.sol);
-    log("cron", `Computed deploy amount: ${deployAmount} SOL (wallet: ${currentBalance.sol} SOL)`);
+    const maxPossibleDeploy = computeDeployAmount(currentBalance.sol);
+    log("cron", `Computed maximum deploy amount: ${maxPossibleDeploy} SOL (wallet: ${currentBalance.sol} SOL)`);
 
     // Load active strategy
     const activeStrategy = getActiveStrategy();
@@ -493,15 +493,18 @@ export async function runScreeningCycle({ silent = false } = {}) {
     const { content } = await agentLoop(`
 SCREENING CYCLE
 ${strategyBlock}
-Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | Deploy: ${deployAmount} SOL
+Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | Deploy: ${maxPossibleDeploy} SOL
 
 PRE-LOADED CANDIDATES (${passing.length} pools):
 ${candidateBlocks.join("\n\n")}
 
 STEPS:
 1. Pick the best candidate based on narrative quality, smart wallets, and pool metrics.
-2. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
-   bins_below = round(35 + (volatility/5)*55) clamped to [35,90].
+2. Call deploy_position. 
+   IMPORTANT: Set amount_y to the SMALLEST of:
+   - ${maxPossibleDeploy} SOL (your standard allocation)
+   - 2% of the pool's active_tvl (to avoid whale risk)
+   bins_below = round(35 + (volatility/5)*55) clamped to [35, ${config.strategy.binsBelow}].
 3. Report in this exact format (no tables, no extra sections):
    🚀 DEPLOYED
 
@@ -922,9 +925,11 @@ Commands:
     if (!isNaN(pick) && pick >= 1 && pick <= startupCandidates.length) {
       await runBusy(async () => {
         const pool = startupCandidates[pick - 1];
-        console.log(`\nDeploying ${DEPLOY} SOL into ${pool.name}...\n`);
+        const wallet = await getWalletBalances();
+        const manualMax = computeDeployAmount(wallet.sol, pool.active_tvl);
+        console.log(`\nDeploying up to ${manualMax} SOL into ${pool.name}...\n`);
         const { content: reply } = await agentLoop(
-          `Deploy ${DEPLOY} SOL into pool ${pool.pool} (${pool.name}). Call get_active_bin first then deploy_position. Report result.`,
+          `Deploy up to ${manualMax} SOL into pool ${pool.pool} (${pool.name}). IMPORTANT: Set amount_y to the SMALLEST of ${manualMax} SOL or 2% of the pool's active_tvl. Call get_active_bin first then deploy_position. Report result.`,
           config.llm.maxSteps,
           [],
           "SCREENER"
@@ -938,9 +943,11 @@ Commands:
     // ── auto: agent picks and deploys ───────
     if (input.toLowerCase() === "auto") {
       await runBusy(async () => {
+        const wallet = await getWalletBalances();
+        const manualMax = computeDeployAmount(wallet.sol);
         console.log("\nAgent is picking and deploying...\n");
         const { content: reply } = await agentLoop(
-          `get_top_candidates, pick the best one, get_active_bin, deploy_position with ${DEPLOY} SOL. Execute now, don't ask.`,
+          `get_top_candidates, pick the best one, get_active_bin, deploy_position. IMPORTANT: Set amount_y to the SMALLEST of ${manualMax} SOL or 2% of the pool's active_tvl. Execute now, don't ask.`,
           config.llm.maxSteps,
           [],
           "SCREENER"
@@ -1113,8 +1120,8 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
   (async () => {
     try {
       const startupStep3 = process.env.DRY_RUN === "true"
-        ? `3. Ignore wallet SOL threshold in dry run: get_top_candidates then simulate deploy ${DEPLOY} SOL.`
-        : `3. If SOL >= ${config.management.minSolToOpen}: get_top_candidates then deploy ${DEPLOY} SOL.`;
+        ? `3. Ignore wallet SOL threshold in dry run: get_top_candidates then simulate deploy (cap at 2% TVL or ${config.management.deployAmountSol} SOL).`
+        : `3. If SOL >= ${config.management.minSolToOpen}: get_top_candidates then deploy (cap at 2% TVL or ${config.management.deployAmountSol} SOL).`;
       await agentLoop(`
 STARTUP CHECK
 1. get_wallet_balance. 2. get_my_positions. ${startupStep3} 4. Report.

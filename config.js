@@ -108,24 +108,25 @@ export const config = {
 
 /**
  * Compute the optimal deploy amount for a given wallet balance.
- * Scales position size with wallet growth (compounding).
- *
- * Formula: clamp(deployable × positionSizePct, floor=deployAmountSol, ceil=maxDeployAmount)
- *
- * Examples (defaults: gasReserve=0.2, positionSizePct=0.35, floor=0.5):
- *   0.8 SOL wallet → 0.6 SOL deploy  (floor)
- *   2.0 SOL wallet → 0.63 SOL deploy
- *   3.0 SOL wallet → 0.98 SOL deploy
- *   4.0 SOL wallet → 1.33 SOL deploy
+ * Added: poolTvl parameter to prevent "whale" risk in small pools.
  */
-export function computeDeployAmount(walletSol) {
+export function computeDeployAmount(walletSol, poolTvl = null) {
   const reserve  = config.management.gasReserve      ?? 0.2;
   const pct      = config.management.positionSizePct ?? 0.35;
   const floor    = config.management.deployAmountSol;
   const ceil     = config.risk.maxDeployAmount;
+  
   const deployable = Math.max(0, walletSol - reserve);
-  const dynamic    = deployable * pct;
-  const result     = Math.min(ceil, Math.max(floor, dynamic));
+  let dynamic      = deployable * pct;
+
+  // NEW: Liquidity Cap Logic
+  // Ensures the bot never deploys more than 2% of the pool's TVL
+  if (poolTvl !== null) {
+    const maxByLiquidity = poolTvl * 0.02; 
+    dynamic = Math.min(dynamic, maxByLiquidity);
+  }
+
+  const result = Math.min(ceil, Math.max(floor, dynamic));
   return parseFloat(result.toFixed(2));
 }
 
