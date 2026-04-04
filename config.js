@@ -20,10 +20,11 @@ if (u.dryRun !== undefined) process.env.DRY_RUN ||= String(u.dryRun);
 export const config = {
   // ─── Risk Limits ─────────────────────────
   risk: {
-    maxPositions:    u.maxPositions    ?? 3,
-    maxDeployAmount: u.maxDeployAmount ?? 50,
-  },
-
+      maxPositions: u.maxPositions ?? 10,
+      maxDeployAmount: u.maxDeployAmount ?? 7,
+      minDeployAmountSol: u.minDeployAmountSol ?? 1,
+      maxPoolExposurePct: u.maxPoolExposurePct ?? 0.02,
+    },
   // ─── Pool Screening Thresholds ───────────
   screening: {
     minFeeActiveTvlRatio: u.minFeeActiveTvlRatio ?? 0.05,
