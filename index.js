@@ -342,7 +342,8 @@ export async function runScreeningCycle({ silent = false } = {}) {
       return screenReport;
     }
     const minRequired = config.management.deployAmountSol + config.management.gasReserve;
-    if (preBalance.sol < minRequired) {
+    const isDryRun = process.env.DRY_RUN === "true";
+    if (!isDryRun && preBalance.sol < minRequired) {
       log("cron", `Screening skipped — insufficient SOL (${preBalance.sol.toFixed(3)} < ${minRequired} needed for deploy + gas)`);
       screenReport = `Screening skipped — insufficient SOL (${preBalance.sol.toFixed(3)} < ${minRequired} needed for deploy + gas).`;
       _screeningBusy = false;
