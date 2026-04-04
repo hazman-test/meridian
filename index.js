@@ -503,7 +503,7 @@ STEPS:
 2. Call deploy_position. 
    IMPORTANT: Set amount_y to the SMALLEST of:
    - ${maxPossibleDeploy} SOL (your standard allocation)
-   - 2% of the pool's active_tvl (to avoid whale risk)
+   - ${config.risk.maxPoolExposurePct * 100}% of the pool's active_tvl (to avoid whale risk)
    bins_below = round(35 + (volatility/5)*55) clamped to [35, ${config.strategy.binsBelow}].
 3. Report in this exact format (no tables, no extra sections):
    🚀 DEPLOYED
@@ -929,7 +929,7 @@ Commands:
         const manualMax = computeDeployAmount(wallet.sol, pool.active_tvl);
         console.log(`\nDeploying up to ${manualMax} SOL into ${pool.name}...\n`);
         const { content: reply } = await agentLoop(
-          `Deploy up to ${manualMax} SOL into pool ${pool.pool} (${pool.name}). IMPORTANT: Set amount_y to the SMALLEST of ${manualMax} SOL or 2% of the pool's active_tvl. Call get_active_bin first then deploy_position. Report result.`,
+          `Deploy up to ${manualMax} SOL into pool ${pool.pool} (${pool.name}). IMPORTANT: Set amount_y to the SMALLEST of ${manualMax} SOL or ${config.risk.maxPoolExposurePct * 100}% of the pool's active_tvl. Call get_active_bin first then deploy_position. Report result.`,
           config.llm.maxSteps,
           [],
           "SCREENER"
@@ -947,7 +947,7 @@ Commands:
         const manualMax = computeDeployAmount(wallet.sol);
         console.log("\nAgent is picking and deploying...\n");
         const { content: reply } = await agentLoop(
-          `get_top_candidates, pick the best one, get_active_bin, deploy_position. IMPORTANT: Set amount_y to the SMALLEST of ${manualMax} SOL or 2% of the pool's active_tvl. Execute now, don't ask.`,
+          `get_top_candidates, pick the best one, get_active_bin, deploy_position. IMPORTANT: Set amount_y to the SMALLEST of ${manualMax} SOL or ${config.risk.maxPoolExposurePct * 100}% of the pool's active_tvl. Execute now, don't ask.`,
           config.llm.maxSteps,
           [],
           "SCREENER"
@@ -1120,8 +1120,8 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
   (async () => {
     try {
       const startupStep3 = process.env.DRY_RUN === "true"
-        ? `3. Ignore wallet SOL threshold in dry run: get_top_candidates then simulate deploy (cap at 2% TVL or ${config.management.deployAmountSol} SOL).`
-        : `3. If SOL >= ${config.management.minSolToOpen}: get_top_candidates then deploy (cap at 2% TVL or ${config.management.deployAmountSol} SOL).`;
+        ? `3. Ignore wallet SOL threshold in dry run: get_top_candidates then simulate deploy (cap at ${config.risk.maxPoolExposurePct * 100}% TVL or ${config.management.deployAmountSol} SOL).`
+        : `3. If SOL >= ${config.management.minSolToOpen}: get_top_candidates then deploy (cap at ${config.risk.maxPoolExposurePct * 100}% TVL or ${config.management.deployAmountSol} SOL).`;
       await agentLoop(`
 STARTUP CHECK
 1. get_wallet_balance. 2. get_my_positions. ${startupStep3} 4. Report.
