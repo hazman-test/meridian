@@ -8,11 +8,19 @@ const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN || null;
 const BASE  = TOKEN ? `https://api.telegram.org/bot${TOKEN}` : null;
+const ALLOWED_USER_IDS = new Set(
+  String(process.env.TELEGRAM_ALLOWED_USER_IDS || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean)
+);
 
 let chatId   = process.env.TELEGRAM_CHAT_ID || null;
 let _offset  = 0;
 let _polling = false;
 let _liveMessageDepth = 0;
+let _warnedMissingChatId = false;
+let _warnedMissingAllowedUsers = false;
 
 // ─── chatId persistence ──────────────────────────────────────────
 function loadChatId() {
@@ -37,6 +45,36 @@ function saveChatId(id) {
 }
 
 loadChatId();
+
+function isAuthorizedIncomingMessage(msg) {
+  const incomingChatId = String(msg.chat?.id || "");
+  const senderUserId = msg.from?.id != null ? String(msg.from.id) : null;
+  const chatType = msg.chat?.type || "unknown";
+
+  if (!chatId) {
+    if (!_warnedMissingChatId) {
+      log("telegram_warn", "Ignoring inbound Telegram messages because TELEGRAM_CHAT_ID / user-config.telegramChatId is not configured. Auto-registration is disabled for safety.");
+      _warnedMissingChatId = true;
+    }
+    return false;
+  }
+
+  if (incomingChatId !== chatId) return false;
+
+  if (chatType !== "private" && ALLOWED_USER_IDS.size === 0) {
+    if (!_warnedMissingAllowedUsers) {
+      log("telegram_warn", "Ignoring group Telegram messages because TELEGRAM_ALLOWED_USER_IDS is not configured. Set explicit allowed user IDs for command/control.");
+      _warnedMissingAllowedUsers = true;
+    }
+    return false;
+  }
+
+  if (ALLOWED_USER_IDS.size > 0) {
+    if (!senderUserId || !ALLOWED_USER_IDS.has(senderUserId)) return false;
+  }
+
+  return true;
+}
 
 // ─── Core send ───────────────────────────────────────────────────
 export function isEnabled() {
@@ -273,21 +311,8 @@ async function poll(onMessage) {
         _offset = update.update_id + 1;
         const msg = update.message;
         if (!msg?.text) continue;
-
-        const incomingChatId = String(msg.chat.id);
-
-        // Auto-register first sender as the owner
-        if (!chatId) {
-          chatId = incomingChatId;
-          saveChatId(chatId);
-          log("telegram", `Registered chat ID: ${chatId}`);
-          await sendMessage("Connected! I'm your LP agent. Ask me anything or use commands like /status.");
-        }
-
-        // Only accept messages from the registered chat
-        if (incomingChatId !== chatId) continue;
-
-        await onMessage(msg.text);
+        if (!isAuthorizedIncomingMessage(msg)) continue;
+        await onMessage(msg);
       }
     } catch (e) {
       if (!e.message?.includes("aborted")) {

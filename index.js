@@ -66,6 +66,17 @@ function stripThink(text) {
   return text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 }
 
+function sanitizeUntrustedPromptText(text, maxLen = 500) {
+  if (!text) return null;
+  const cleaned = String(text)
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[<>`]/g, "")
+    .trim()
+    .slice(0, maxLen);
+  return cleaned ? JSON.stringify(cleaned) : null;
+}
+
 async function runBriefing() {
   log("cron", "Starting morning briefing");
   try {
@@ -448,8 +459,8 @@ export async function runScreeningCycle({ silent = false } = {}) {
         `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map(w => w.name).join(", ")})` : ""}`,
         activeBin != null ? `  active_bin: ${activeBin}` : null,
         priceChange != null ? `  1h: price${priceChange >= 0 ? "+" : ""}${priceChange}%, net_buyers=${netBuyers ?? "?"}` : null,
-        n?.narrative ? `  narrative: ${n.narrative.slice(0, 500)}` : `  narrative: none`,
-        mem ? `  memory: ${mem}` : null,
+        n?.narrative ? `  narrative_untrusted: ${sanitizeUntrustedPromptText(n.narrative, 500)}` : `  narrative_untrusted: none`,
+        mem ? `  memory_untrusted: ${sanitizeUntrustedPromptText(mem, 500)}` : null,
       ].filter(Boolean).join("\n");
 
       return block;
@@ -755,10 +766,12 @@ if (isTTY) {
     }
   }
 
-  async function telegramHandler(text) {
+  async function telegramHandler(msg) {
+    const text = msg?.text?.trim();
+    if (!text) return;
     if (_managementBusy || _screeningBusy || busy) {
       if (_telegramQueue.length < 5) {
-        _telegramQueue.push(text);
+        _telegramQueue.push(msg);
         sendMessage(`⏳ Queued (${_telegramQueue.length} in queue): "${text.slice(0, 60)}"`).catch(() => {});
       } else {
         sendMessage("Queue is full (5 messages). Wait for the agent to finish.").catch(() => {});

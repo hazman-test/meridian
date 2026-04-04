@@ -17,6 +17,18 @@ const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
 const LESSONS_FILE = "./lessons.json";
 const MIN_EVOLVE_POSITIONS = 5;   // don't evolve until we have real data
 const MAX_CHANGE_PER_STEP  = 0.20; // never shift a threshold more than 20% at once
+const MAX_MANUAL_LESSON_LENGTH = 400;
+
+function sanitizeLessonText(text, maxLen = MAX_MANUAL_LESSON_LENGTH) {
+  if (text == null) return null;
+  const cleaned = String(text)
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[<>`]/g, "")
+    .trim()
+    .slice(0, maxLen);
+  return cleaned || null;
+}
 
 function load() {
   if (!fs.existsSync(LESSONS_FILE)) {
@@ -405,10 +417,12 @@ function nudge(current, target, maxChange) {
  * @param {string}   opts.role   - "SCREENER" | "MANAGER" | "GENERAL" | null (all roles)
  */
 export function addLesson(rule, tags = [], { pinned = false, role = null } = {}) {
+  const safeRule = sanitizeLessonText(rule);
+  if (!safeRule) return;
   const data = load();
   data.lessons.push({
     id: Date.now(),
-    rule,
+    rule: safeRule,
     tags,
     outcome: "manual",
     pinned: !!pinned,
@@ -416,7 +430,7 @@ export function addLesson(rule, tags = [], { pinned = false, role = null } = {})
     created_at: new Date().toISOString(),
   });
   save(data);
-  log("lessons", `Manual lesson added${pinned ? " [PINNED]" : ""}${role ? ` [${role}]` : ""}: ${rule}`);
+  log("lessons", `Manual lesson added${pinned ? " [PINNED]" : ""}${role ? ` [${role}]` : ""}: ${safeRule}`);
 }
 
 /**

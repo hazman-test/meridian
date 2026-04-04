@@ -14,6 +14,18 @@ import { log } from "./logger.js";
 const STATE_FILE = "./state.json";
 
 const MAX_RECENT_EVENTS = 20;
+const MAX_INSTRUCTION_LENGTH = 280;
+
+function sanitizeStoredText(text, maxLen = MAX_INSTRUCTION_LENGTH) {
+  if (text == null) return null;
+  const cleaned = String(text)
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[<>`]/g, "")
+    .trim()
+    .slice(0, maxLen);
+  return cleaned || null;
+}
 
 function load() {
   if (!fs.existsSync(STATE_FILE)) {
@@ -196,9 +208,9 @@ export function setPositionInstruction(position_address, instruction) {
   const state = load();
   const pos = state.positions[position_address];
   if (!pos) return false;
-  pos.instruction = instruction || null;
+  pos.instruction = sanitizeStoredText(instruction);
   save(state);
-  log("state", `Position ${position_address} instruction set: ${instruction}`);
+  log("state", `Position ${position_address} instruction set: ${pos.instruction}`);
   return true;
 }
 
