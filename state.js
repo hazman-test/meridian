@@ -95,6 +95,8 @@ export function trackPosition({
     closed_at: null,
     notes: [],
     peak_pnl_pct: 0,
+    pending_peak_pnl_pct: null,
+    pending_peak_started_at: null,
     trailing_active: false,
   };
   pushEvent(state, { action: "deploy", position, pool_name: pool_name || pool });
@@ -214,6 +216,49 @@ export function setPositionInstruction(position_address, instruction) {
   return true;
 }
 
+export function queuePeakConfirmation(position_address, candidatePnlPct) {
+  if (candidatePnlPct == null) return false;
+  const state = load();
+  const pos = state.positions[position_address];
+  if (!pos || pos.closed) return false;
+
+  const currentPeak = pos.peak_pnl_pct ?? 0;
+  if (candidatePnlPct <= currentPeak) return false;
+
+  const changed =
+    pos.pending_peak_pnl_pct == null ||
+    candidatePnlPct > pos.pending_peak_pnl_pct;
+
+  if (!changed) return false;
+
+  pos.pending_peak_pnl_pct = candidatePnlPct;
+  pos.pending_peak_started_at = new Date().toISOString();
+  save(state);
+  log("state", `Position ${position_address} peak candidate ${candidatePnlPct.toFixed(2)}% queued for 15s confirmation`);
+  return true;
+}
+
+export function resolvePendingPeak(position_address, currentPnlPct, toleranceRatio = 0.85) {
+  const state = load();
+  const pos = state.positions[position_address];
+  if (!pos || pos.closed || pos.pending_peak_pnl_pct == null) return { confirmed: false, pending: false };
+
+  const pendingPeak = pos.pending_peak_pnl_pct;
+  pos.pending_peak_pnl_pct = null;
+  pos.pending_peak_started_at = null;
+
+  if (currentPnlPct != null && currentPnlPct >= pendingPeak * toleranceRatio) {
+    pos.peak_pnl_pct = Math.max(pos.peak_pnl_pct ?? 0, pendingPeak, currentPnlPct);
+    save(state);
+    log("state", `Position ${position_address} peak PnL confirmed at ${pos.peak_pnl_pct.toFixed(2)}% after recheck`);
+    return { confirmed: true, peak: pos.peak_pnl_pct };
+  }
+
+  save(state);
+  log("state", `Position ${position_address} rejected pending peak ${pendingPeak.toFixed(2)}% after 15s recheck (current: ${currentPnlPct ?? "?"}%)`);
+  return { confirmed: false, rejected: true, pendingPeak };
+}
+
 /**
  * Get all tracked positions (optionally filter open-only).
  */
@@ -278,17 +323,11 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
 
   let changed = false;
 
-  // Track peak PnL
-  if (currentPnlPct != null && currentPnlPct > (pos.peak_pnl_pct ?? 0)) {
-    pos.peak_pnl_pct = currentPnlPct;
-    changed = true;
-  }
-
   // Activate trailing TP once trigger threshold is reached
-  if (mgmtConfig.trailingTakeProfit && !pos.trailing_active && currentPnlPct >= mgmtConfig.trailingTriggerPct) {
+  if (mgmtConfig.trailingTakeProfit && !pos.trailing_active && (pos.peak_pnl_pct ?? 0) >= mgmtConfig.trailingTriggerPct) {
     pos.trailing_active = true;
     changed = true;
-    log("state", `Position ${position_address} trailing TP activated at ${currentPnlPct}% (peak: ${pos.peak_pnl_pct}%)`);
+    log("state", `Position ${position_address} trailing TP activated (confirmed peak: ${pos.peak_pnl_pct}%)`);
   }
 
   // Update OOR state

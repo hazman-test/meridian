@@ -11,7 +11,7 @@ import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
 import { registerCronRestarter } from "./tools/executor.js";
 import { startPolling, stopPolling, sendMessage, sendHTML, notifyOutOfRange, isEnabled as telegramEnabled, createLiveMessage } from "./telegram.js";
 import { generateBriefing } from "./briefing.js";
-import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, setPositionInstruction, updatePnlAndCheckExits } from "./state.js";
+import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
 import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memory.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
@@ -59,6 +59,9 @@ let _managementBusy = false; // prevents overlapping management cycles
 let _screeningBusy = false;  // prevents overlapping screening cycles
 let _screeningLastTriggered = 0; // epoch ms — prevents management from spamming screening
 let _pollTriggeredAt = 0; // epoch ms — cooldown for poller-triggered management
+const _peakConfirmTimers = new Map();
+const TRAILING_PEAK_CONFIRM_DELAY_MS = 15_000;
+const TRAILING_PEAK_CONFIRM_TOLERANCE = 0.85;
 
 /** Strip <think>...</think> reasoning blocks that some models leak into output */
 function stripThink(text) {
@@ -75,6 +78,23 @@ function sanitizeUntrustedPromptText(text, maxLen = 500) {
     .trim()
     .slice(0, maxLen);
   return cleaned ? JSON.stringify(cleaned) : null;
+}
+
+function schedulePeakConfirmation(positionAddress) {
+  if (!positionAddress || _peakConfirmTimers.has(positionAddress)) return;
+
+  const timer = setTimeout(async () => {
+    _peakConfirmTimers.delete(positionAddress);
+    try {
+      const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
+      const position = result?.positions?.find((p) => p.position === positionAddress);
+      resolvePendingPeak(positionAddress, position?.pnl_pct ?? null, TRAILING_PEAK_CONFIRM_TOLERANCE);
+    } catch (error) {
+      log("state_warn", `Peak confirmation failed for ${positionAddress}: ${error.message}`);
+    }
+  }, TRAILING_PEAK_CONFIRM_DELAY_MS);
+
+  _peakConfirmTimers.set(positionAddress, timer);
 }
 
 async function runBriefing() {
@@ -148,6 +168,9 @@ export async function runManagementCycle({ silent = false } = {}) {
     // JS trailing TP check
     const exitMap = new Map();
     for (const p of positionData) {
+      if (queuePeakConfirmation(p.position, p.pnl_pct)) {
+        schedulePeakConfirmation(p.position);
+      }
       const exit = updatePnlAndCheckExits(p.position, p, config.management);
       if (exit) {
         exitMap.set(p.position, exit.reason);
@@ -594,6 +617,9 @@ Summarize the current portfolio health, total fees earned, and performance of al
       const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
       if (!result?.positions?.length) return;
       for (const p of result.positions) {
+        if (queuePeakConfirmation(p.position, p.pnl_pct)) {
+          schedulePeakConfirmation(p.position);
+        }
         const exit = updatePnlAndCheckExits(p.position, p, config.management);
         if (exit) {
           const cooldownMs = config.schedule.managementIntervalMin * 60 * 1000;
