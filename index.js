@@ -32,6 +32,9 @@ const timers = {
   screeningLastRun: null,
 };
 
+let _managementCyclesCompleted = 0; // Tracks successful management runs for startup logic
+let _hasInitialLearnStarted = false; // Prevents re-triggering the startup learn logic
+
 function nextRunIn(lastRun, intervalMin) {
   if (!lastRun) return intervalMin * 60;
   const elapsed = (Date.now() - lastRun) / 1000;
@@ -95,6 +98,30 @@ function schedulePeakConfirmation(positionAddress) {
   }, TRAILING_PEAK_CONFIRM_DELAY_MS);
 
   _peakConfirmTimers.set(positionAddress, timer);
+}
+
+// Reusable Learning Function
+async function runLearningCycle() {
+  if (_managementBusy || _screeningBusy) return;
+  log("cron", "Starting automated learning cycle...");
+  try {
+    const { candidates } = await getTopCandidates({ limit: 5 }).catch(() => ({ candidates: [] }));
+    if (!candidates || candidates.length === 0) {
+      log("cron", "No candidates found for learning. Skipping.");
+      return;
+    }
+    const poolList = candidates.map((p, i) => `${i + 1}. ${p.name} (${p.pool})`).join("\n");
+    
+    await agentLoop(`
+      Study top LPers across these pools:
+      ${poolList}
+      Call study_top_lpers for each, then derive 3-5 actionable lessons and add_lesson.
+    `, config.llm.maxSteps, [], "GENERAL");
+    
+    log("cron", "Learning cycle complete.");
+  } catch (error) {
+    log("cron_error", `Learning failed: ${error.message}`);
+  }
 }
 
 async function runBriefing() {
@@ -315,6 +342,15 @@ After executing, write a brief one-line result per position.
     } else {
       log("cron", "Management: all positions STAY — skipping LLM");
       await liveMessage?.note("No tool actions needed.");
+    }
+
+    _managementCyclesCompleted++; // Increment count on success
+
+    // If learning is enabled and we hit the startup threshold, trigger first learn
+    if (config.schedule.learningIntervalHours && !_hasInitialLearnStarted && _managementCyclesCompleted >= 5) {
+      log("startup", `Management cycle threshold (5) hit. Starting first learn cycle.`);
+      _hasInitialLearnStarted = true;
+      runLearningCycle().catch((e) => log("cron_error", `Startup learn failed: ${e.message}`));
     }
 
     // Trigger screening after management
@@ -604,6 +640,14 @@ export function startCronJobs() {
 
   const screenTask = cron.schedule(`*/${Math.max(1, config.schedule.screeningIntervalMin)} * * * *`, runScreeningCycle);
 
+  // Automated study task - only schedules if 'learningIntervalHours' exists and is > 0
+  if (config.schedule.learningIntervalHours && config.schedule.learningIntervalHours > 0) {
+    const learnTask = cron.schedule(`0 */${config.schedule.learningIntervalHours} * * *`, async () => {
+      await runLearningCycle();
+    });
+    _cronTasks.push(learnTask);
+  }
+
   const healthTask = cron.schedule(`0 * * * *`, async () => {
     if (_managementBusy) return;
     _managementBusy = true;
@@ -662,7 +706,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
     }
   }, 30_000);
 
-  _cronTasks = [mgmtTask, screenTask, healthTask, briefingTask, briefingWatchdog];
+  _cronTasks.push(mgmtTask, screenTask, healthTask, briefingTask, briefingWatchdog);
   // Store interval ref so stopCronJobs can clear it
   _cronTasks._pnlPollInterval = pnlPollInterval;
   log("cron", `Cycles started — management every ${config.schedule.managementIntervalMin}m, screening every ${config.schedule.screeningIntervalMin}m`);
