@@ -25,7 +25,7 @@ const TP_PCT = config.management.takeProfitFeePct;
 const DEPLOY = config.management.deployAmountSol;
 
 // ═══════════════════════════════════════════
-//  CYCLE TIMERS
+//  CYCLE TIMERS & TRACKING
 // ═══════════════════════════════════════════
 const timers = {
   managementLastRun: null,
@@ -34,6 +34,7 @@ const timers = {
 
 let _managementCyclesCompleted = 0; // Tracks successful management runs for startup logic
 let _hasInitialLearnStarted = false; // Prevents re-triggering the startup learn logic
+let _hasInitialEvolveStarted = false; // Prevents re-triggering startup evolution
 
 function nextRunIn(lastRun, intervalMin) {
   if (!lastRun) return intervalMin * 60;
@@ -58,10 +59,10 @@ function buildPrompt() {
 //  CRON DEFINITIONS
 // ═══════════════════════════════════════════
 let _cronTasks = [];
-let _managementBusy = false; // prevents overlapping management cycles
-let _screeningBusy = false;  // prevents overlapping screening cycles
-let _screeningLastTriggered = 0; // epoch ms — prevents management from spamming screening
-let _pollTriggeredAt = 0; // epoch ms — cooldown for poller-triggered management
+let _managementBusy = false; 
+let _screeningBusy = false;  
+let _screeningLastTriggered = 0; 
+let _pollTriggeredAt = 0; 
 const _peakConfirmTimers = new Map();
 const TRAILING_PEAK_CONFIRM_DELAY_MS = 15_000;
 const TRAILING_PEAK_CONFIRM_TOLERANCE = 0.85;
@@ -98,6 +99,34 @@ function schedulePeakConfirmation(positionAddress) {
   }, TRAILING_PEAK_CONFIRM_DELAY_MS);
 
   _peakConfirmTimers.set(positionAddress, timer);
+}
+
+// Reusable Evolution Function
+async function runEvolutionCycle() {
+  log("cron", "Starting automated strategy evolution...");
+  try {
+    const perf = getPerformanceSummary();
+    if (!perf || perf.total_positions_closed < 5) {
+      log("cron", `Evolution skipped: need at least 5 closed positions (currently: ${perf?.total_positions_closed || 0})`);
+      return;
+    }
+
+    const fs = await import("fs");
+    const lessonsData = JSON.parse(fs.default.readFileSync("./lessons.json", "utf8"));
+    const result = evolveThresholds(lessonsData.performance, config);
+
+    if (!result || Object.keys(result.changes).length === 0) {
+      log("cron", "No threshold changes needed — strategy is currently optimized.");
+    } else {
+      reloadScreeningThresholds();
+      log("cron", "Strategy evolved successfully. New thresholds applied to user-config.json.");
+      for (const [key, val] of Object.entries(result.changes)) {
+        log("cron", `  ${key} updated: ${result.rationale[key]}`);
+      }
+    }
+  } catch (error) {
+    log("cron_error", `Evolution failed: ${error.message}`);
+  }
 }
 
 // Reusable Learning Function
@@ -344,16 +373,22 @@ After executing, write a brief one-line result per position.
       await liveMessage?.note("No tool actions needed.");
     }
 
-    _managementCyclesCompleted++; // Increment count on success
-
-    // If learning is enabled and we hit the startup threshold, trigger first learn
+    _managementCyclesCompleted++; // Successfully finished a cycle
+    
+    // Check for Delayed Learning
     if (config.schedule.learningIntervalHours && !_hasInitialLearnStarted && _managementCyclesCompleted >= 5) {
       log("startup", `Management cycle threshold (5) hit. Starting first learn cycle.`);
       _hasInitialLearnStarted = true;
       runLearningCycle().catch((e) => log("cron_error", `Startup learn failed: ${e.message}`));
     }
 
-    // Trigger screening after management
+    // Check for Delayed Evolution
+    if (config.schedule.evolutionIntervalHours && !_hasInitialEvolveStarted && _managementCyclesCompleted >= 5) {
+        log("startup", `Management cycle threshold (5) hit. Starting first automated evolution cycle.`);
+        _hasInitialEvolveStarted = true;
+        runEvolutionCycle().catch((e) => log("cron_error", `Startup evolve failed: ${e.message}`));
+    }
+
     const afterPositions = await getMyPositions({ force: true }).catch(() => null);
     const afterCount = afterPositions?.positions?.length ?? 0;
     if (afterCount < config.risk.maxPositions && Date.now() - _screeningLastTriggered > screeningCooldownMs) {
@@ -646,6 +681,14 @@ export function startCronJobs() {
       await runLearningCycle();
     });
     _cronTasks.push(learnTask);
+  }
+
+  // Automated Evolution task - only schedules if 'evolutionIntervalHours' exists and is > 0
+  if (config.schedule.evolutionIntervalHours && config.schedule.evolutionIntervalHours > 0) {
+    const evolveTask = cron.schedule(`0 */${config.schedule.evolutionIntervalHours} * * *`, async () => {
+        await runEvolutionCycle();
+    });
+    _cronTasks.push(evolveTask);
   }
 
   const healthTask = cron.schedule(`0 * * * *`, async () => {
