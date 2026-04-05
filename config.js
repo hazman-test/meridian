@@ -28,6 +28,7 @@ export const config = {
     },
   // ─── Pool Screening Thresholds ───────────
   screening: {
+    maxScreenedCandidates: u.maxScreenedCandidates    ?? 10,
     minFeeActiveTvlRatio: u.minFeeActiveTvlRatio ?? 0.05,
     minTraxrScore:     u.minTraxrScore     ?? 75,
     minTvl:            u.minTvl            ?? 10_000,
@@ -143,6 +144,7 @@ export function reloadScreeningThresholds() {
   try {
     const fresh = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8"));
     const s = config.screening;
+    if (fresh.maxScreenedCandidates != null) s.maxScreenedCandidates = fresh.maxScreenedCandidates; 
     if (fresh.minTraxrScore  != null) s.minTraxrScore = fresh.minTraxrScore; 
     if (fresh.minFeeActiveTvlRatio != null) s.minFeeActiveTvlRatio = fresh.minFeeActiveTvlRatio;
     if (fresh.minOrganic     != null) s.minOrganic     = fresh.minOrganic;

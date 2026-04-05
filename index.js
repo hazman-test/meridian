@@ -463,8 +463,6 @@ export async function runScreeningCycle({ silent = false } = {}) {
   try {
     // Reuse pre-fetched balance — no extra RPC call needed
     const currentBalance = preBalance;
-    const maxPossibleDeploy = computeDeployAmount(currentBalance.sol, currentBalance.sol_price);
-    log("cron", `Computed maximum deploy amount: ${maxPossibleDeploy} SOL (wallet: ${currentBalance.sol} SOL)`);
 
     // Load active strategy
     const activeStrategy = getActiveStrategy();
@@ -473,8 +471,9 @@ export async function runScreeningCycle({ silent = false } = {}) {
       : `No active strategy — use default bid_ask, bins_above: 0, SOL only.`;
 
     // Fetch top candidates, then recon each sequentially with a small delay to avoid 429s
-    const topCandidates = await getTopCandidates({ limit: 10 }).catch(() => null);
-    const candidates = (topCandidates?.candidates || topCandidates?.pools || []).slice(0, 10);
+    const limit = config.screening.maxScreenedCandidates ?? 10;
+    const topCandidates = await getTopCandidates({ limit: limit }).catch(() => null);
+    const candidates = (topCandidates?.candidates || topCandidates?.pools || []).slice(0, limit);
 
     const allCandidates = [];
     for (const pool of candidates) {
@@ -496,13 +495,13 @@ export async function runScreeningCycle({ silent = false } = {}) {
       await new Promise(r => setTimeout(r, 150)); // avoid 429s
     }
 
-    // Hard filters after token recon — block launchpads, excessive Jupiter bot holders, low TVL, and bad Traxr scores
+    // ─── HARD SECURITY GATEKEEPER ────────────────────
     const passing = allCandidates.filter(({ pool, ti, txr }) => {
       // 1. Traxr Safety Filter
       if (txr && txr.score !== undefined) {
         log("security", `[TRAXR] ${pool.name} Safety Score: ${txr.score}/100`);
-        if (txr.score < config.screening.minTraxrScore || txr.impact === 'HIGH' || txr.impact === 'CRITICAL') {
-          log("security", `❌ [REJECT] ${pool.name} - Low Safety Score (${txr.score} < ${config.screening.minTraxrScore})`);
+        if (txr.score < (config.screening.minTraxrScore ?? 75) || txr.impact === 'HIGH' || txr.impact === 'CRITICAL') {
+          log("security", `❌ [REJECT] ${pool.name} - Low Safety Score (${txr.score} < ${config.screening.minTraxrScore ?? 75})`);
           return false;
         }
       }
@@ -519,7 +518,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
         log("screening", `Skipping ${pool.name} — blocked launchpad (${launchpad})`);
         return false;
       }
-      
+
       // 4. Force SOL Pairs Only
       if (pool.quote?.mint !== config.tokens.SOL) {
         log("screening", `❌ [REJECT] ${pool.name} - Quote token is not SOL`);
@@ -548,6 +547,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     // Build compact candidate blocks
     const candidateBlocks = passing.map(({ pool, sw, n, ti, txr, mem }, i) => {
       // ─── DYNAMIC DEPLOY LIMIT (CALCULATED PER POOL) ─────────────────
+      // We pass the live sol_price to computeDeployAmount to ensure accurate USD -> SOL liquidity caps
       const deployLimit = computeDeployAmount(currentBalance.sol, currentBalance.sol_price, pool.active_tvl);
 
       // ─── DYNAMIC BIN SCALING (CALCULATED PER POOL) ──────────────────
@@ -613,7 +613,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     const { content } = await agentLoop(`
 SCREENING CYCLE
 ${strategyBlock}
-Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | Deploy: ${maxPossibleDeploy} SOL
+Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)}
 
 PRE-LOADED CANDIDATES (${passing.length} pools):
 ${candidateBlocks.join("\n\n")}
@@ -893,7 +893,7 @@ if (isTTY) {
     const [wallet, positions, { candidates, total_eligible, total_screened }] = await Promise.all([
       getWalletBalances(),
       getMyPositions({ force: true }),
-      getTopCandidates({ limit: 5 }),
+      getTopCandidates({ limit: config.screening.maxScreenedCandidates ?? 10 }),
     ]);
 
     startupCandidates = candidates;
@@ -1064,7 +1064,7 @@ Commands:
         const manualMax = computeDeployAmount(wallet.sol, wallet.sol_price, pool.active_tvl);
         console.log(`\nDeploying up to ${manualMax} SOL into ${pool.name}...\n`);
         const { content: reply } = await agentLoop(
-          `Deploy up to ${manualMax} SOL into pool ${pool.pool} (${pool.name}). IMPORTANT: Set amount_y to the SMALLEST of ${manualMax} SOL or ${config.risk.maxPoolExposurePct * 100}% of the pool's active_tvl. Call get_active_bin first then deploy_position. Report result.`,
+          `Deploy up to ${manualMax} SOL into pool ${pool.pool} (${pool.name}). IMPORTANT: Set amount_y EXACTLY to the 'deploy_limit' provided for your chosen pool. Call get_active_bin first then deploy_position. Report result.`,
           config.llm.maxSteps,
           [],
           "SCREENER"
@@ -1082,7 +1082,7 @@ Commands:
         const manualMax = computeDeployAmount(wallet.sol, wallet.sol_price);
         console.log("\nAgent is picking and deploying...\n");
         const { content: reply } = await agentLoop(
-          `get_top_candidates, pick the best one, get_active_bin, deploy_position. IMPORTANT: Set amount_y to the SMALLEST of ${manualMax} SOL or ${config.risk.maxPoolExposurePct * 100}% of the pool's active_tvl. Execute now, don't ask.`,
+          `get_top_candidates, pick the best one, get_active_bin, deploy_position. IMPORTANT: Set amount_y EXACTLY to the 'deploy_limit' provided for your chosen pool. Execute now, don't ask.`,
           config.llm.maxSteps,
           [],
           "SCREENER"
@@ -1127,7 +1127,7 @@ Commands:
 
     if (input === "/candidates") {
       await runBusy(async () => {
-        const { candidates, total_eligible, total_screened } = await getTopCandidates({ limit: 5 });
+        const { candidates, total_eligible, total_screened } = await getTopCandidates({ limit: config.screening.maxScreenedCandidates ?? 10 });
         startupCandidates = candidates;
         console.log(`\nTop pools (${total_eligible} eligible from ${total_screened} screened):\n`);
         console.log(formatCandidates(candidates));
@@ -1139,7 +1139,9 @@ Commands:
     if (input === "/thresholds") {
       const s = config.screening;
       console.log("\nCurrent screening thresholds:");
-      console.log(`  minFeeActiveTvlRatio: ${s.minFeeActiveTvlRatio}`);
+      console.log(`  maxScreenedCandidates: ${s.maxScreenedCandidates}`);
+      console.log(`  minTraxrScore:         ${s.minTraxrScore}`);
+      console.log(`  minFeeActiveTvlRatio:  ${s.minFeeActiveTvlRatio}`);
       console.log(`  minOrganic:            ${s.minOrganic}`);
       console.log(`  minHolders:            ${s.minHolders}`);
       console.log(`  minTvl:                ${s.minTvl}`);
@@ -1172,9 +1174,9 @@ Commands:
         if (poolArg) {
           poolsToStudy = [{ pool: poolArg, name: poolArg }];
         } else {
-          // Fetch top 10 candidates across all eligible pools
+          // Fetch top candidates across all eligible pools
           console.log("\nFetching top pool candidates to study...\n");
-          const { candidates } = await getTopCandidates({ limit: 10 });
+          const { candidates } = await getTopCandidates({ limit: config.screening.maxScreenedCandidates ?? 10 });
           if (!candidates.length) {
             console.log("No eligible pools found to study.\n");
             return;
