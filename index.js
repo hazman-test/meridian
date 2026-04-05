@@ -233,7 +233,7 @@ export async function runManagementCycle({ silent = false } = {}) {
         const txr = await traxr.getPoolScore(p.base_mint, config.tokens.SOL);
         if (txr && txr.score !== undefined) {
           // Use the new configurable threshold for active positions
-          const minScoreToKeep = config.screening.minTraxrScoreToKeepRunning ?? 60;
+          const minScoreToKeep = config.screening.minTraxrScoreToKeepRunning ?? 55;
           
           if (txr.score < minScoreToKeep || txr.impact === 'CRITICAL') {
             log("security", `🚨 [EMERGENCY EXIT] ${p.pair} security compromised! Score: ${txr.score}/100`);
@@ -533,7 +533,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
 
       log("security", `[TRAXR] ${pool.name} Safety Score: ${txr.score}/100`);
       
-      const minScore = config.screening.minTraxrScore ?? 75;
+      const minScore = config.screening.minTraxrScore ?? 65;
       if (txr.score < minScore || txr.impact === 'HIGH' || txr.impact === 'CRITICAL') {
         log("security", `❌ [REJECT] ${pool.name} - Risky Score (${txr.score} < ${minScore}) or Impact: ${txr.impact}`);
         return false;
@@ -580,12 +580,9 @@ export async function runScreeningCycle({ silent = false } = {}) {
     // Build compact candidate blocks
     const candidateBlocks = passing.map(({ pool, sw, n, ti, txr, mem }, i) => {
       // ─── DYNAMIC DEPLOY LIMIT (CALCULATED PER POOL) ─────────────────
-      // We pass the live sol_price to computeDeployAmount to ensure accurate USD -> SOL liquidity caps
       const deployLimit = computeDeployAmount(currentBalance.sol, currentBalance.sol_price, pool.active_tvl);
 
       // ─── DYNAMIC BIN SCALING (CALCULATED PER POOL) ──────────────────
-      // BINS_PER_SOL defines target liquidity density (default 40). 
-      // This ensures small deployments concentrate capital while large ones maintain range.
       const BINS_PER_SOL = config.strategy.binsPerSol ?? 40; 
       const capitalAdjustedMaxBins = Math.floor(deployLimit * BINS_PER_SOL);
       const poolVolatility = pool.volatility || 0; 
@@ -1046,12 +1043,7 @@ if (isTTY) {
       const agentRole = isDeployRequest ? "SCREENER" : "GENERAL";
       const agentModel = agentRole === "SCREENER" ? config.llm.screeningModel : config.llm.generalModel;
       liveMessage = await createLiveMessage("🤖 Live Update", `Request: ${text.slice(0, 240)}`);
-      const { content } = await agentLoop(text, config.llm.maxSteps, sessionHistory, agentRole, agentModel, null, {
-        requireTool: true,
-        interactive: true,
-        onToolStart: async ({ name }) => { await liveMessage?.toolStart(name); },
-        onToolFinish: async ({ name, result, success }) => { await liveMessage?.toolFinish(name, result, success); },
-      });
+      const { content } = await agentLoop(text, config.llm.maxSteps, sessionHistory, agentRole, agentModel, null, { requireTool: true });
       appendHistory(text, content);
       if (liveMessage) await liveMessage.finalize(stripThink(content));
       else await sendMessage(stripThink(content));
@@ -1173,7 +1165,8 @@ Commands:
       const s = config.screening;
       console.log("\nCurrent screening thresholds:");
       console.log(`  maxScreenedCandidates: ${s.maxScreenedCandidates}`);
-      console.log(`  minTraxrScore:         ${s.minTraxrScore}`);
+      console.log(`  minTraxrScore (entry): ${s.minTraxrScore}`);
+      console.log(`  minTraxrScoreToKeepRunning: ${s.minTraxrScoreToKeepRunning}`);
       console.log(`  minFeeActiveTvlRatio:  ${s.minFeeActiveTvlRatio}`);
       console.log(`  minOrganic:            ${s.minOrganic}`);
       console.log(`  minHolders:            ${s.minHolders}`);
