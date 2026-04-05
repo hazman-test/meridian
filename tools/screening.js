@@ -187,7 +187,6 @@ export async function getTopCandidates({ limit = 10 } = {}) {
         eligible[i].ath              = price.ath;
       }
       if (clusters?.length) {
-        // Surface KOL presence and top cluster trend for LLM
         eligible[i].kol_in_clusters      = clusters.some((c) => c.has_kol);
         eligible[i].top_cluster_trend    = clusters[0]?.trend ?? null;
         eligible[i].top_cluster_hold_pct = clusters[0]?.holding_pct ?? null;
@@ -236,10 +235,13 @@ export async function getTopCandidates({ limit = 10 } = {}) {
         } catch (e) {
           const isTimeout = e.message && e.message.includes("timeout");
           log("traxr", `Traxr ${isTimeout ? "timeout" : "error"} for ${p.base.symbol || p.base.mint.slice(0,8)}: ${e.message}`);
+          
+          // Soft reject on timeout: pass to LLM with warning
           return { 
             score: 0, 
-            passed: !isTimeout,   
-            error: e.message 
+            passed: true,                    
+            error: e.message,
+            warning: isTimeout ? "Traxr API timeout - score unknown" : null
           };
         }
       })
@@ -249,19 +251,22 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       const res = traxrResults[i];
       if (res.status !== "fulfilled") return false;
 
-      const { score, passed, error } = res.value;
+      const { score, passed, error, warning } = res.value;
 
       if (!passed) {
-        if (error && error.includes("timeout")) {
-          log("security", `⚠️ [TRAXR TIMEOUT] ${p.name || p.base?.symbol}-SOL - Treating as unknown (not rejected)`);
-          p.traxr_safety_score = score;
-          return true; // do NOT reject on timeout
-        }
+        // Only hard reject on real low score (not on timeout)
         log("security", `❌ [REJECT] ${p.name || p.base?.symbol}-SOL - Risky Score (${score} < ${threshold})`);
         return false;
       }
 
       p.traxr_safety_score = score;
+
+      // Attach warning so LLM knows Traxr data is missing
+      if (warning) {
+        p.traxr_warning = warning;
+        log("security", `⚠️ [TRAXR TIMEOUT] ${p.name || p.base?.symbol}-SOL - ${warning} (passed to LLM)`);
+      }
+
       return true;
     });
 
