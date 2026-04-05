@@ -215,17 +215,33 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     }
   }
 
-  // === TRAXR HARD FILTER (Entry Gate) ===
+   // === TRAXR HARD FILTER (Entry Gate) ===
   if (config.traxrEnabled) {
     const traxr = new TraxrModule();
     const threshold = config.screening.minTraxrScore ?? 65;
     const before = eligible.length;
 
+    // Simple in-memory cooldown: don't re-reject the same mint for 5 minutes
+    const now = Date.now();
+    if (!global.recentlyRejected) global.recentlyRejected = new Map();
+
     const traxrResults = await Promise.allSettled(
       eligible.map(async (p) => {
         if (!p.base?.mint) return { score: 0, passed: false, error: "no mint" };
+
+        const mint = p.base.mint;
+
+        // Check cooldown
+        if (global.recentlyRejected.has(mint)) {
+          const lastReject = global.recentlyRejected.get(mint);
+          if (now - lastReject < 5 * 60 * 1000) {  // 5 minutes cooldown
+            log("traxr", `Cooldown: skipping Traxr re-check for ${p.base.symbol || mint.slice(0,8)}`);
+            return { score: 0, passed: true, error: null }; // soft pass during cooldown
+          }
+        }
+
         try {
-          const scoreData = await traxr.getPoolScore(p.base.mint, "So11111111111111111111111111111111111111112");
+          const scoreData = await traxr.getPoolScore(mint, "So11111111111111111111111111111111111111112");
           const safetyScore = scoreData?.safetyScore ?? scoreData?.score ?? 0;
           return { 
             score: safetyScore, 
@@ -234,9 +250,8 @@ export async function getTopCandidates({ limit = 10 } = {}) {
           };
         } catch (e) {
           const isTimeout = e.message && e.message.includes("timeout");
-          log("traxr", `Traxr ${isTimeout ? "timeout" : "error"} for ${p.base.symbol || p.base.mint.slice(0,8)}: ${e.message}`);
+          log("traxr", `Traxr ${isTimeout ? "timeout" : "error"} for ${p.base.symbol || mint.slice(0,8)}: ${e.message}`);
           
-          // Soft reject on timeout: pass to LLM with warning
           return { 
             score: 0, 
             passed: true,                    
@@ -254,14 +269,14 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       const { score, passed, error, warning } = res.value;
 
       if (!passed) {
-        // Only hard reject on real low score (not on timeout)
+        // Hard reject + add to cooldown
+        global.recentlyRejected.set(p.base.mint, now);
         log("security", `❌ [REJECT] ${p.name || p.base?.symbol}-SOL - Risky Score (${score} < ${threshold})`);
         return false;
       }
 
       p.traxr_safety_score = score;
 
-      // Attach warning so LLM knows Traxr data is missing
       if (warning) {
         p.traxr_warning = warning;
         log("security", `⚠️ [TRAXR TIMEOUT] ${p.name || p.base?.symbol}-SOL - ${warning} (passed to LLM)`);
