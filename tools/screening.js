@@ -189,7 +189,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       if (clusters?.length) {
         // Surface KOL presence and top cluster trend for LLM
         eligible[i].kol_in_clusters      = clusters.some((c) => c.has_kol);
-        eligible[i].top_cluster_trend    = clusters[0]?.trend ?? null;      // buy|sell|neutral
+        eligible[i].top_cluster_trend    = clusters[0]?.trend ?? null;
         eligible[i].top_cluster_hold_pct = clusters[0]?.holding_pct ?? null;
       }
     }
@@ -202,10 +202,10 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     // ATH filter — drop pools where price is too close to ATH
     const athFilter = config.screening.athFilterPct;
     if (athFilter != null) {
-      const threshold = 100 + athFilter; // e.g. -20 → threshold = 80 (price must be <= 80% of ATH)
+      const threshold = 100 + athFilter;
       const before = eligible.length;
       eligible.splice(0, eligible.length, ...eligible.filter((p) => {
-        if (p.price_vs_ath_pct == null) return true; // no data → don't filter
+        if (p.price_vs_ath_pct == null) return true;
         if (p.price_vs_ath_pct > threshold) {
           log("screening", `ATH filter: dropped ${p.name} — ${p.price_vs_ath_pct}% of ATH (limit: ${threshold}%)`);
           return false;
@@ -219,22 +219,28 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   // === TRAXR HARD FILTER (Entry Gate) ===
   if (config.traxrEnabled) {
     const traxr = new TraxrModule();
-    const threshold = config.screening.minTraxrScore ?? 75;
+    const threshold = config.screening.minTraxrScore ?? 65;
     const before = eligible.length;
 
     const traxrResults = await Promise.allSettled(
       eligible.map(async (p) => {
-        if (!p.base?.mint) return { score: 0, passed: false };
+        if (!p.base?.mint) return { score: 0, passed: false, error: "no mint" };
         try {
           const scoreData = await traxr.getPoolScore(p.base.mint, "So11111111111111111111111111111111111111112");
           const safetyScore = scoreData?.safetyScore ?? scoreData?.score ?? 0;
           return { 
             score: safetyScore, 
-            passed: safetyScore >= threshold 
+            passed: safetyScore >= threshold,
+            error: null
           };
         } catch (e) {
-          log("traxr", `Traxr failed for ${p.base.symbol}`);
-          return { score: 0, passed: false };
+          const isTimeout = e.message && e.message.includes("timeout");
+          log("traxr", `Traxr ${isTimeout ? "timeout" : "error"} for ${p.base.symbol || p.base.mint.slice(0,8)}: ${e.message}`);
+          return { 
+            score: 0, 
+            passed: !isTimeout,   
+            error: e.message 
+          };
         }
       })
     );
@@ -243,9 +249,14 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       const res = traxrResults[i];
       if (res.status !== "fulfilled") return false;
 
-      const { score, passed } = res.value;
+      const { score, passed, error } = res.value;
 
       if (!passed) {
+        if (error && error.includes("timeout")) {
+          log("security", `⚠️ [TRAXR TIMEOUT] ${p.name || p.base?.symbol}-SOL - Treating as unknown (not rejected)`);
+          p.traxr_safety_score = score;
+          return true; // do NOT reject on timeout
+        }
         log("security", `❌ [REJECT] ${p.name || p.base?.symbol}-SOL - Risky Score (${score} < ${threshold})`);
         return false;
       }
@@ -256,11 +267,13 @@ export async function getTopCandidates({ limit = 10 } = {}) {
 
     if (eligible.length < before) {
       log("security", `Traxr filtered out ${before - eligible.length} pool(s) (minTraxrScore = ${threshold})`);
+    } else if (before > 0) {
+      log("traxr", `Traxr passed all ${before} candidates`);
     }
   }
 
   // Drop any pools whose creator is on the dev blocklist (caught via advanced-info)
-  const before = eligible.length;
+  const devBefore = eligible.length;
   const filtered = eligible.filter((p) => {
     if (p.dev && isDevBlocked(p.dev)) {
       log("dev_blocklist", `Filtered blocked deployer (okx) ${p.dev.slice(0, 8)} token ${p.base?.symbol}`);
@@ -269,7 +282,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     return true;
   });
   eligible.splice(0, eligible.length, ...filtered);
-  if (eligible.length < before) log("dev_blocklist", `Filtered ${before - eligible.length} pool(s) via OKX creator check`);
+  if (eligible.length < devBefore) log("dev_blocklist", `Filtered ${devBefore - eligible.length} pool(s) via OKX creator check`);
 
   return {
     candidates: eligible,
@@ -335,7 +348,6 @@ function condensePool(p) {
       ? fix(p.fee_active_tvl_ratio, 4)
       : (p.active_tvl > 0 ? fix((p.fee / p.active_tvl) * 100, 4) : 0),
     volatility: fix(p.volatility, 2),
-
 
     // Token health
     holders: p.base_token_holders,
