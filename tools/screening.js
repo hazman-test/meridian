@@ -216,9 +216,10 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     }
   }
 
-  // === TRAXR HARD FILTER (Entry Gate) ===
+    // === TRAXR HARD FILTER (Entry Gate) ===
   if (config.traxrEnabled) {
     const traxr = new TraxrModule();
+    const threshold = config.minTraxrScore ?? 75;
     const before = eligible.length;
 
     const traxrResults = await Promise.allSettled(
@@ -229,7 +230,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
           const safetyScore = scoreData?.safetyScore ?? scoreData?.score ?? 0;
           return { 
             score: safetyScore, 
-            passed: safetyScore >= (config.minTraxrScore ?? 75) 
+            passed: safetyScore >= threshold 
           };
         } catch (e) {
           log("traxr", `Traxr failed for ${p.base.symbol}`);
@@ -245,13 +246,18 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       const { score, passed } = res.value;
 
       if (!passed) {
-        log("security", `❌ [REJECT] ${p.name || p.base?.symbol}-SOL - Risky Score (${score} < ${config.minTraxrScore ?? 75})`);
+        log("security", `❌ [REJECT] ${p.name || p.base?.symbol}-SOL - Risky Score (${score} < ${threshold})`);
         return false;
       }
 
       p.traxr_safety_score = score;
       return true;
     });
+
+    if (eligible.length < before) {
+      log("security", `Traxr filtered out ${before - eligible.length} pool(s) (minTraxrScore = ${threshold})`);
+    }
+  }
 
     if (eligible.length < before) {
       log("security", `Traxr filtered out ${before - eligible.length} pool(s) (minTraxrScore = ${config.minTraxrScore ?? 75})`);
