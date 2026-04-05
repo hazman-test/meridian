@@ -519,6 +519,13 @@ export async function runScreeningCycle({ silent = false } = {}) {
         log("screening", `Skipping ${pool.name} — blocked launchpad (${launchpad})`);
         return false;
       }
+      
+      // 4. Force SOL Pairs Only
+      if (pool.quote?.mint !== config.tokens.SOL) {
+        log("screening", `❌ [REJECT] ${pool.name} - Quote token is not SOL`);
+        return false;
+      }
+
       const botPct = ti?.audit?.bot_holders_pct;
       const maxBotHoldersPct = config.screening.maxBotHoldersPct;
       if (botPct != null && maxBotHoldersPct != null && botPct > maxBotHoldersPct) {
