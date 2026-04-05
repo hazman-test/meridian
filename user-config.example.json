@@ -6,6 +6,8 @@
   "llmModel": "minimax/minimax-m2.7",
   "dryRun": true,
 
+  
+
   "deployAmountSol": 0.5,
   "maxPositions": 3,
   "minSolToOpen": 0.55,

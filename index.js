@@ -227,6 +227,36 @@ export async function runManagementCycle({ silent = false } = {}) {
       return { ...p, recall: recallForPool(p.pool) };
     });
 
+    const securityMap = new Map();
+    for (const p of positionData) {
+      try {
+        const txr = await traxr.getPoolScore(p.base_mint, config.tokens.SOL);
+        if (txr && txr.score !== undefined) {
+          // Use the new configurable threshold for active positions
+          const minScoreToKeep = config.screening.minTraxrScoreToKeepRunning ?? 60;
+          
+          if (txr.score < minScoreToKeep || txr.impact === 'CRITICAL') {
+            log("security", `🚨 [EMERGENCY EXIT] ${p.pair} security compromised! Score: ${txr.score}/100`);
+            securityMap.set(p.position, { reason: `security score dropped to ${txr.score}`, score: txr.score });
+          }
+        }
+      } catch (e) {
+        log("security_error", `Failed to re-scan ${p.pair}: ${e.message}`);
+        
+        // Alert if API fails AND position is running a loss
+        if (p.pnl_pct != null && p.pnl_pct < 0) {
+            const lossMsg = `⚠️ [SECURITY WARNING]\nTraxr API call failed for **${p.pair}**.\n` +
+                            `Current PnL: ${p.pnl_pct}%\n` +
+                            `Security status is UNKNOWN while in loss. Manual check recommended!`;
+            
+            if (telegramEnabled()) {
+                sendMessage(lossMsg).catch(() => {});
+            }
+        }
+      }
+    }
+    // ────────────────────────────────────────────────────────────────
+
     // JS trailing TP check
     const exitMap = new Map();
     for (const p of positionData) {
@@ -241,27 +271,29 @@ export async function runManagementCycle({ silent = false } = {}) {
     }
 
     // ── Deterministic rule checks (no LLM) ──────────────────────────
-    // action: CLOSE | CLAIM | STAY | INSTRUCTION (needs LLM)
     const actionMap = new Map();
     for (const p of positionData) {
-      // Hard exit — highest priority
+      // 1. Security Exit (Highest Priority)
+      if (securityMap.has(p.position)) {
+        const sec = securityMap.get(p.position);
+        actionMap.set(p.position, { action: "CLOSE", rule: "security", reason: sec.reason });
+        continue;
+      }
+      // 2. Hard exit from trailing TP
       if (exitMap.has(p.position)) {
         actionMap.set(p.position, { action: "CLOSE", rule: "exit", reason: exitMap.get(p.position) });
         continue;
       }
-      // Instruction-set — pass to LLM, can't parse in JS
+      // 3. Instruction-set
       if (p.instruction) {
         actionMap.set(p.position, { action: "INSTRUCTION" });
         continue;
       }
 
-      // Sanity-check PnL against tracked initial deposit — API sometimes returns bad data
-      // giving -99% PnL which would incorrectly trigger stop loss
       const tracked = getTrackedPosition(p.position);
       const pnlSuspect = (() => {
         if (p.pnl_pct == null) return false;
-        if (p.pnl_pct > -90) return false; // only flag extreme negatives
-        // Cross-check: if we have a tracked deposit and current value isn't near zero, it's bad data
+        if (p.pnl_pct > -90) return false; 
         if (tracked?.amount_sol && (p.total_value_usd ?? 0) > 0.01) {
           log("cron_warn", `Suspect PnL for ${p.pair}: ${p.pnl_pct}% but position still has value — skipping PnL rules`);
           return true;
@@ -269,37 +301,31 @@ export async function runManagementCycle({ silent = false } = {}) {
         return false;
       })();
 
-      // Rule 1: stop loss
       if (!pnlSuspect && p.pnl_pct != null && p.pnl_pct <= config.management.stopLossPct) {
         actionMap.set(p.position, { action: "CLOSE", rule: 1, reason: "stop loss" });
         continue;
       }
-      // Rule 2: take profit
       if (!pnlSuspect && p.pnl_pct != null && p.pnl_pct >= config.management.takeProfitFeePct) {
         actionMap.set(p.position, { action: "CLOSE", rule: 2, reason: "take profit" });
         continue;
       }
-      // Rule 3: pumped far above range
       if (p.active_bin != null && p.upper_bin != null &&
           p.active_bin > p.upper_bin + config.management.outOfRangeBinsToClose) {
         actionMap.set(p.position, { action: "CLOSE", rule: 3, reason: "pumped far above range" });
         continue;
       }
-      // Rule 4: stale above range
       if (p.active_bin != null && p.upper_bin != null &&
           p.active_bin > p.upper_bin &&
           (p.minutes_out_of_range ?? 0) >= config.management.outOfRangeWaitMinutes) {
         actionMap.set(p.position, { action: "CLOSE", rule: 4, reason: "OOR" });
         continue;
       }
-      // Rule 5: fee yield too low
       if (p.fee_per_tvl_24h != null &&
           p.fee_per_tvl_24h < config.management.minFeePerTvl24h &&
           (p.age_minutes ?? 0) >= 60) {
         actionMap.set(p.position, { action: "CLOSE", rule: 5, reason: "low yield" });
         continue;
       }
-      // Claim rule
       if ((p.unclaimed_fees_usd ?? 0) >= config.management.minClaimAmount) {
         actionMap.set(p.position, { action: "CLAIM" });
         continue;
@@ -319,8 +345,9 @@ export async function runManagementCycle({ silent = false } = {}) {
       const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
       let line = `**${p.pair}** | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}% | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
       if (p.instruction) line += `\nNote: "${p.instruction}"`;
+      if (act.action === "CLOSE" && act.rule === "security") line += `\n🚨 Security: ${act.reason}`;
       if (act.action === "CLOSE" && act.rule === "exit") line += `\n⚡ Trailing TP: ${act.reason}`;
-      if (act.action === "CLOSE" && act.rule && act.rule !== "exit") line += `\nRule ${act.rule}: ${act.reason}`;
+      if (act.action === "CLOSE" && act.rule && act.rule !== "exit" && act.rule !== "security") line += `\nRule ${act.rule}: ${act.reason}`;
       if (act.action === "CLAIM") line += `\n→ Claiming fees`;
       return line;
     });
@@ -365,6 +392,7 @@ RULES:
 - CLAIM: call claim_fees with position address
 - INSTRUCTION: evaluate the instruction condition. If met → close_position. If not → HOLD, do nothing.
 - ⚡ exit alerts: close immediately, no exceptions
+- 🚨 security alerts: close immediately, no exceptions
 
 Execute the required actions. Do NOT re-evaluate CLOSE/CLAIM — rules already applied. Just execute.
 After executing, write a brief one-line result per position.
@@ -379,7 +407,7 @@ After executing, write a brief one-line result per position.
       await liveMessage?.note("No tool actions needed.");
     }
 
-    _managementCyclesCompleted++; // Successfully finished a cycle
+    _managementCyclesCompleted++; 
     
     // Check for Delayed Learning
     if (config.schedule.learningIntervalHours && !_hasInitialLearnStarted && _managementCyclesCompleted >= 5) {

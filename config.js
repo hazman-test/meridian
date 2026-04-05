@@ -32,6 +32,7 @@ export const config = {
     maxScreenedCandidates: u.maxScreenedCandidates ?? 10,
     minFeeActiveTvlRatio:  u.minFeeActiveTvlRatio  ?? 0.05,
     minTraxrScore:         u.minTraxrScore         ?? 75,
+    minTraxrScoreToKeepRunning: u.minTraxrScoreToKeepRunning ?? 60,
     minTvl:            u.minTvl            ?? 10_000,
     maxTvl:            u.maxTvl            ?? 150_000,
     minVolume:         u.minVolume         ?? 500,
@@ -147,7 +148,6 @@ export function reloadScreeningThresholds() {
     if (fresh.solPairsOnly          != null) s.solPairsOnly          = fresh.solPairsOnly;
     if (fresh.maxScreenedCandidates != null) s.maxScreenedCandidates = fresh.maxScreenedCandidates; 
     if (fresh.minTraxrScore         != null) s.minTraxrScore         = fresh.minTraxrScore; 
-    
     if (fresh.minFeeActiveTvlRatio  != null) s.minFeeActiveTvlRatio  = fresh.minFeeActiveTvlRatio;
     if (fresh.minOrganic     != null) s.minOrganic     = fresh.minOrganic;
     if (fresh.minHolders     != null) s.minHolders     = fresh.minHolders;
@@ -167,5 +167,6 @@ export function reloadScreeningThresholds() {
     if (fresh.maxBotHoldersPct  != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct;
     if (fresh.maxPoolExposurePct != null) config.risk.maxPoolExposurePct = fresh.maxPoolExposurePct;
     if (fresh.binsPerSol != null) config.strategy.binsPerSol = fresh.binsPerSol;
+    if (fresh.minTraxrScoreToKeepRunning != null) s.minTraxrScoreToKeepRunning = fresh.minTraxrScoreToKeepRunning;
   } catch { /* ignore */ }
 }
