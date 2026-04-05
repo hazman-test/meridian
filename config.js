@@ -18,6 +18,7 @@ if (u.llmApiKey)  process.env.LLM_API_KEY       ||= u.llmApiKey;
 if (u.dryRun !== undefined) process.env.DRY_RUN ||= String(u.dryRun);
 
 export const config = {
+  traxrEnabled: u.traxrEnabled ?? true,
   // ─── Risk Limits ─────────────────────────
   risk: {
       maxPositions: u.maxPositions ?? 10,
@@ -28,6 +29,7 @@ export const config = {
   // ─── Pool Screening Thresholds ───────────
   screening: {
     minFeeActiveTvlRatio: u.minFeeActiveTvlRatio ?? 0.05,
+    minTraxrScore:     u.minTraxrScore     ?? 75,
     minTvl:            u.minTvl            ?? 10_000,
     maxTvl:            u.maxTvl            ?? 150_000,
     minVolume:         u.minVolume         ?? 500,
@@ -110,7 +112,7 @@ export const config = {
  * Compute the optimal deploy amount for a given wallet balance.
  * Added: poolTvl parameter to prevent "whale" risk in small pools.
  */
-export function computeDeployAmount(walletSol, poolTvl = null) {
+export function computeDeployAmount(walletSol, solPrice, poolTvl = null) {
   const reserve  = config.management.gasReserve      ?? 0.2;
   const pct      = config.management.positionSizePct ?? 0.35;
   const floor    = config.management.deployAmountSol;
@@ -120,10 +122,11 @@ export function computeDeployAmount(walletSol, poolTvl = null) {
   let dynamic      = deployable * pct;
 
   // NEW: Liquidity Cap Logic
-  // Ensures the bot never deploys more than 2% of the pool's TVL
-  if (poolTvl !== null) {
-    const maxByLiquidity = poolTvl * 0.02; 
-    dynamic = Math.min(dynamic, maxByLiquidity);
+  // Ensures the bot never deploys more than X% of the pool's TVL
+  if (poolTvl !== null && solPrice) {
+    const maxByLiquidityUsd = poolTvl * config.risk.maxPoolExposurePct; 
+    const maxByLiquiditySol = maxByLiquidityUsd / solPrice;
+    dynamic = Math.min(dynamic, maxByLiquiditySol);
   }
 
   const result = Math.min(ceil, Math.max(floor, dynamic));
@@ -140,6 +143,7 @@ export function reloadScreeningThresholds() {
   try {
     const fresh = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8"));
     const s = config.screening;
+    if (fresh.minTraxrScore  != null) s.minTraxrScore = fresh.minTraxrScore; 
     if (fresh.minFeeActiveTvlRatio != null) s.minFeeActiveTvlRatio = fresh.minFeeActiveTvlRatio;
     if (fresh.minOrganic     != null) s.minOrganic     = fresh.minOrganic;
     if (fresh.minHolders     != null) s.minHolders     = fresh.minHolders;

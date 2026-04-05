@@ -17,6 +17,12 @@ import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memor
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
 
+// ═══════════════════════════════════════════
+//  SECURITY INTEGRATION
+// ═══════════════════════════════════════════
+import TraxrModule from "./tools/traxr.js";
+const traxr = new TraxrModule();
+
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
 log("startup", `Model: ${process.env.LLM_MODEL || "hermes-3-405b"}`);
@@ -457,7 +463,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
   try {
     // Reuse pre-fetched balance — no extra RPC call needed
     const currentBalance = preBalance;
-    const maxPossibleDeploy = computeDeployAmount(currentBalance.sol);
+    const maxPossibleDeploy = computeDeployAmount(currentBalance.sol, currentBalance.sol_price);
     log("cron", `Computed maximum deploy amount: ${maxPossibleDeploy} SOL (wallet: ${currentBalance.sol} SOL)`);
 
     // Load active strategy
@@ -473,23 +479,41 @@ export async function runScreeningCycle({ silent = false } = {}) {
     const allCandidates = [];
     for (const pool of candidates) {
       const mint = pool.base?.mint;
-      const [smartWallets, narrative, tokenInfo] = await Promise.allSettled([
+      const [smartWallets, narrative, tokenInfo, traxrData] = await Promise.allSettled([
         checkSmartWalletsOnPool({ pool_address: pool.pool }),
         mint ? getTokenNarrative({ mint }) : Promise.resolve(null),
         mint ? getTokenInfo({ query: mint }) : Promise.resolve(null),
+        traxr.getPoolScore(pool.base?.mint, pool.quote?.mint)
       ]);
       allCandidates.push({
         pool,
         sw: smartWallets.status === "fulfilled" ? smartWallets.value : null,
         n: narrative.status === "fulfilled" ? narrative.value : null,
         ti: tokenInfo.status === "fulfilled" ? tokenInfo.value?.results?.[0] : null,
+        txr: traxrData.status === "fulfilled" ? traxrData.value : null,
         mem: recallForPool(pool.pool),
       });
       await new Promise(r => setTimeout(r, 150)); // avoid 429s
     }
 
-    // Hard filters after token recon — block launchpads and excessive Jupiter bot holders
-    const passing = allCandidates.filter(({ pool, ti }) => {
+    // Hard filters after token recon — block launchpads, excessive Jupiter bot holders, low TVL, and bad Traxr scores
+    const passing = allCandidates.filter(({ pool, ti, txr }) => {
+      // 1. Traxr Safety Filter
+      if (txr && txr.score !== undefined) {
+        log("security", `[TRAXR] ${pool.name} Safety Score: ${txr.score}/100`);
+        if (txr.score < config.screening.minTraxrScore || txr.impact === 'HIGH' || txr.impact === 'CRITICAL') {
+          log("security", `❌ [REJECT] ${pool.name} - Low Safety Score (${txr.score} < ${config.screening.minTraxrScore})`);
+          return false;
+        }
+      }
+
+      // 2. Hard TVL Filter (Prevents hallucinations on small pools)
+      if (pool.active_tvl < config.screening.minTvl) {
+        log("screening", `❌ [REJECT] ${pool.name} - TVL $${pool.active_tvl} < Min $${config.screening.minTvl}`);
+        return false;
+      }
+
+      // 3. Launchpad & Bot filters
       const launchpad = ti?.launchpad ?? null;
       if (launchpad && config.screening.blockedLaunchpads.includes(launchpad)) {
         log("screening", `Skipping ${pool.name} — blocked launchpad (${launchpad})`);
@@ -505,7 +529,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     });
 
     if (passing.length === 0) {
-      screenReport = `No candidates available (all blocked by launchpad filter).`;
+      screenReport = `No candidates available (all blocked by security filters).`;
       return screenReport;
     }
 
@@ -515,12 +539,15 @@ export async function runScreeningCycle({ silent = false } = {}) {
     );
 
     // Build compact candidate blocks
-    const candidateBlocks = passing.map(({ pool, sw, n, ti, mem }, i) => {
+    const candidateBlocks = passing.map(({ pool, sw, n, ti, txr, mem }, i) => {
+      // ─── DYNAMIC DEPLOY LIMIT (CALCULATED PER POOL) ─────────────────
+      const deployLimit = computeDeployAmount(currentBalance.sol, currentBalance.sol_price, pool.active_tvl);
+
       // ─── DYNAMIC BIN SCALING (CALCULATED PER POOL) ──────────────────
       // BINS_PER_SOL defines target liquidity density (20 bins per 1 SOL = 0.05 SOL/bin).
       // This ensures small deployments concentrate capital while large ones maintain range.
       const BINS_PER_SOL = 20; 
-      const capitalAdjustedMaxBins = Math.floor(maxPossibleDeploy * BINS_PER_SOL);
+      const capitalAdjustedMaxBins = Math.floor(deployLimit * BINS_PER_SOL);
       const poolVolatility = pool.volatility || 0; 
       
       const dynamicBinsBelow = Math.min(
@@ -561,8 +588,8 @@ export async function runScreeningCycle({ silent = false } = {}) {
 
       const block = [
         `POOL: ${pool.name} (${pool.pool})`,
-        `  metrics: bins_below_target=${finalBinsBelow}, bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${poolVolatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
-        `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
+        `  metrics: deploy_limit=${deployLimit} SOL, bins_below_target=${finalBinsBelow}, bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${poolVolatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
+        `  security: Traxr Score=${txr?.score ?? "N/A"}/100 | audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
         okxParts ? `  okx: ${okxParts}` : okxUnavailable ? `  okx: unavailable` : null,
         okxTags  ? `  tags: ${okxTags}` : null,
         pool.price_vs_ath_pct != null ? `  ath: price_vs_ath=${pool.price_vs_ath_pct}%${pool.top_cluster_trend ? `, top_cluster=${pool.top_cluster_trend}` : ""}` : null,
@@ -587,14 +614,8 @@ ${candidateBlocks.join("\n\n")}
 STEPS:
 1. Pick the best candidate based on narrative quality, smart wallets, and pool metrics.
 2. Call deploy_position. 
-   IMPORTANT: amount_y MUST be a single number. 
-   Calculate it as the SMALLEST of:
-   - ${maxPossibleDeploy} (your max allocation)
-   - ${config.risk.maxPoolExposurePct * 100}% of the pool's active_tvl (look for 'tvl' in the metrics above)
-   Note: If 2% of TVL is less than 0.1 SOL, you may skip the pool as being too small.
-   
-   RANGE CALCULATION:
-   - Set bins_below EXACTLY to the 'bins_below_target' value provided in the metrics block for your chosen pool.
+   IMPORTANT: Set amount_y EXACTLY to the 'deploy_limit' provided for your chosen pool in the candidate block. 
+   RANGE CALCULATION: Set bins_below EXACTLY to the 'bins_below_target' value provided.
 
 3. Report in this exact format (no tables, no extra sections):
    🚀 DEPLOYED
@@ -622,7 +643,7 @@ STEPS:
    Smart wallets: <names or none>
 
    RISK
-   <If OKX advanced/risk data exists, list only the fields that actually exist: Risk level, Bundle, Sniper, Suspicious, ATH distance, Rugpull, Wash.>
+   <If Traxr Score or OKX advanced/risk data exists, list only the fields that actually exist: Traxr Score, Risk level, Bundle, Sniper, Suspicious, ATH distance, Rugpull, Wash.>
    <If only rugpull/wash exist, list just those.>
    <If OKX enrichment is missing, write exactly: OKX: unavailable>
 
@@ -1033,7 +1054,7 @@ Commands:
       await runBusy(async () => {
         const pool = startupCandidates[pick - 1];
         const wallet = await getWalletBalances();
-        const manualMax = computeDeployAmount(wallet.sol, pool.active_tvl);
+        const manualMax = computeDeployAmount(wallet.sol, wallet.sol_price, pool.active_tvl);
         console.log(`\nDeploying up to ${manualMax} SOL into ${pool.name}...\n`);
         const { content: reply } = await agentLoop(
           `Deploy up to ${manualMax} SOL into pool ${pool.pool} (${pool.name}). IMPORTANT: Set amount_y to the SMALLEST of ${manualMax} SOL or ${config.risk.maxPoolExposurePct * 100}% of the pool's active_tvl. Call get_active_bin first then deploy_position. Report result.`,
@@ -1051,7 +1072,7 @@ Commands:
     if (input.toLowerCase() === "auto") {
       await runBusy(async () => {
         const wallet = await getWalletBalances();
-        const manualMax = computeDeployAmount(wallet.sol);
+        const manualMax = computeDeployAmount(wallet.sol, wallet.sol_price);
         console.log("\nAgent is picking and deploying...\n");
         const { content: reply } = await agentLoop(
           `get_top_candidates, pick the best one, get_active_bin, deploy_position. IMPORTANT: Set amount_y to the SMALLEST of ${manualMax} SOL or ${config.risk.maxPoolExposurePct * 100}% of the pool's active_tvl. Execute now, don't ask.`,
