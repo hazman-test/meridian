@@ -225,8 +225,6 @@ const toolMap = {
     }
 
     // Save as a lesson — but skip ephemeral per-deploy interval changes
-    // (managementIntervalMin / screeningIntervalMin change every deploy based on volatility;
-    //  the rule is already in the system prompt, storing it 75+ times is pure noise)
     const lessonsKeys = Object.keys(applied).filter(
       k => k !== "managementIntervalMin" && k !== "screeningIntervalMin"
     );
@@ -237,6 +235,27 @@ const toolMap = {
 
     log("config", `Agent self-tuned: ${JSON.stringify(applied)} — ${reason}`);
     return { success: true, applied, unknown, reason };
+  },
+
+  // =============================================
+  //  TRAXR TOOLS — exposed to the LLM agents
+  // =============================================
+  get_pool_score: async ({ mintA, mintB, dataset = null }) => {
+    const TraxrModule = (await import('./traxr.js')).default;
+    const traxr = new TraxrModule();
+    return await traxr.getPoolScore(mintA, mintB, dataset);
+  },
+
+  get_pool_by_id: async ({ poolId, dataset = null }) => {
+    const TraxrModule = (await import('./traxr.js')).default;
+    const traxr = new TraxrModule();
+    return await traxr.getPoolById(poolId, dataset);
+  },
+
+  get_traxr_alerts: async () => {
+    const TraxrModule = (await import('./traxr.js')).default;
+    const traxr = new TraxrModule();
+    return await traxr.getAlerts();
   },
 };
 
@@ -445,8 +464,6 @@ async function runSafetyChecks(name, args) {
     }
 
     case "swap_token": {
-      // Basic check — prevent swapping when DRY_RUN is true
-      // (handled inside swapToken itself, but belt-and-suspenders)
       return { pass: true };
     }
 
