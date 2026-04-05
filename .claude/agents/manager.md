@@ -35,6 +35,7 @@ You have access to these CLI commands (always use `node cli.js <cmd>`):
 - OOR downside for >10 minutes with no volume recovery
 - PnL < -25% with no volume recovery
 - Take profit: total return (fees + PnL) >= 10% of deployed capital
+- Traxr Safety Score drops below config.minTraxrScoreToKeepRunning (defined in user-config.json, falls back to config.js if not set)
 
 **These rules override user-config thresholds when the token data is clear.** If the position pumped out of range and you're up 15%+, the data is telling you to close — don't wait because config says "OOR wait 10 min."
 

@@ -44,6 +44,7 @@ You have access to these CLI commands:
 - organic score < 60
 - launchpad is blocked
 - fee/TVL ratio < 0.05
+- Traxr Safety Score < config.minTraxrScore (defined in user-config.json, falls back to config.js if not set)
 
 **Strong signals (favour deployment):**
 - fee/TVL ratio > 0.15
