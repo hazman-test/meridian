@@ -551,9 +551,9 @@ export async function runScreeningCycle({ silent = false } = {}) {
       const deployLimit = computeDeployAmount(currentBalance.sol, currentBalance.sol_price, pool.active_tvl);
 
       // ─── DYNAMIC BIN SCALING (CALCULATED PER POOL) ──────────────────
-      // BINS_PER_SOL defines target liquidity density (20 bins per 1 SOL = 0.05 SOL/bin).
+      // BINS_PER_SOL defines target liquidity density (default 40). 
       // This ensures small deployments concentrate capital while large ones maintain range.
-      const BINS_PER_SOL = 20; 
+      const BINS_PER_SOL = config.strategy.binsPerSol ?? 40; 
       const capitalAdjustedMaxBins = Math.floor(deployLimit * BINS_PER_SOL);
       const poolVolatility = pool.volatility || 0; 
       

@@ -43,14 +43,14 @@ export const config = {
     maxBinStep:        u.maxBinStep        ?? 125,
     timeframe:         u.timeframe         ?? "5m",
     category:          u.category          ?? "trending",
-    minTokenFeesSol:   u.minTokenFeesSol   ?? 30,  // global fees paid (priority+jito tips). below = bundled/scam
-    maxBundlePct:      u.maxBundlePct      ?? 30,  // max bundle holding % (OKX advanced-info)
-    maxBotHoldersPct:  u.maxBotHoldersPct  ?? 30,  // max bot holder addresses % (Jupiter audit)
-    maxTop10Pct:       u.maxTop10Pct       ?? 60,  // max top 10 holders concentration
-    blockedLaunchpads:  u.blockedLaunchpads  ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
-    minTokenAgeHours:   u.minTokenAgeHours   ?? null, // null = no minimum
-    maxTokenAgeHours:   u.maxTokenAgeHours   ?? null, // null = no maximum
-    athFilterPct:       u.athFilterPct       ?? null, // e.g. -20 = only deploy if price is >= 20% below ATH
+    minTokenFeesSol:   u.minTokenFeesSol   ?? 30,
+    maxBundlePct:      u.maxBundlePct      ?? 30,
+    maxBotHoldersPct:  u.maxBotHoldersPct  ?? 30,
+    maxTop10Pct:       u.maxTop10Pct       ?? 60,
+    blockedLaunchpads:  u.blockedLaunchpads  ?? [],
+    minTokenAgeHours:   u.minTokenAgeHours   ?? null,
+    maxTokenAgeHours:   u.maxTokenAgeHours   ?? null,
+    athFilterPct:       u.athFilterPct       ?? null,
   },
 
   // ─── Position Management ────────────────
@@ -65,17 +65,15 @@ export const config = {
     stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -50,
     takeProfitFeePct:      u.takeProfitFeePct      ?? 5,
     minFeePerTvl24h:       u.minFeePerTvl24h       ?? 7,
-    minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 60, // minutes before low yield can trigger close
+    minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 60,
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,
     positionSizePct:       u.positionSizePct       ?? 0.35,
-    // Trailing take-profit
     trailingTakeProfit:    u.trailingTakeProfit    ?? true,
-    trailingTriggerPct:    u.trailingTriggerPct    ?? 3,    // activate trailing at X% PnL
-    trailingDropPct:       u.trailingDropPct       ?? 1.5,  // close when drops X% from peak
-    pnlSanityMaxDiffPct:   u.pnlSanityMaxDiffPct   ?? 5,    // max allowed diff between reported and derived pnl % before ignoring a tick
-    // SOL mode — positions, PnL, and balances reported in SOL instead of USD
+    trailingTriggerPct:    u.trailingTriggerPct    ?? 3,
+    trailingDropPct:       u.trailingDropPct       ?? 1.5,
+    pnlSanityMaxDiffPct:   u.pnlSanityMaxDiffPct   ?? 5,
     solMode:               u.solMode               ?? false,
   },
 
@@ -83,6 +81,7 @@ export const config = {
   strategy: {
     strategy:  u.strategy  ?? "bid_ask",
     binsBelow: u.binsBelow ?? 69,
+    binsPerSol: u.binsPerSol ?? 40, 
   },
 
   // ─── Scheduling ─────────────────────────
@@ -112,7 +111,7 @@ export const config = {
 
 /**
  * Compute the optimal deploy amount for a given wallet balance.
- * Added: poolTvl parameter to prevent "whale" risk in small pools.
+ * Fixed: Now uses solPrice to accurately calculate liquidity caps.
  */
 export function computeDeployAmount(walletSol, solPrice, poolTvl = null) {
   const reserve  = config.management.gasReserve      ?? 0.2;
@@ -123,10 +122,9 @@ export function computeDeployAmount(walletSol, solPrice, poolTvl = null) {
   const deployable = Math.max(0, walletSol - reserve);
   let dynamic      = deployable * pct;
 
-  // NEW: Liquidity Cap Logic
-  // Ensures the bot never deploys more than X% of the pool's TVL
+  // NEW: Fixed Liquidity Cap Logic
   if (poolTvl !== null && solPrice) {
-    const maxByLiquidityUsd = poolTvl * config.risk.maxPoolExposurePct; 
+    const maxByLiquidityUsd = poolTvl * (config.risk.maxPoolExposurePct ?? 0.02); 
     const maxByLiquiditySol = maxByLiquidityUsd / solPrice;
     dynamic = Math.min(dynamic, maxByLiquiditySol);
   }
@@ -137,17 +135,19 @@ export function computeDeployAmount(walletSol, solPrice, poolTvl = null) {
 
 /**
  * Reload user-config.json and apply updated screening thresholds to the
- * in-memory config object. Called after threshold evolution so the next
- * agent cycle uses the evolved values without a restart.
+ * in-memory config object. 
  */
 export function reloadScreeningThresholds() {
   if (!fs.existsSync(USER_CONFIG_PATH)) return;
   try {
     const fresh = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8"));
     const s = config.screening;
-    if (fresh.solPairsOnly          != null) s.solPairsOnly          = fresh.solPairsOnly; // <-- ADDED THIS
+    
+    // Restoration of new reload parameters
+    if (fresh.solPairsOnly          != null) s.solPairsOnly          = fresh.solPairsOnly;
     if (fresh.maxScreenedCandidates != null) s.maxScreenedCandidates = fresh.maxScreenedCandidates; 
     if (fresh.minTraxrScore         != null) s.minTraxrScore         = fresh.minTraxrScore; 
+    
     if (fresh.minFeeActiveTvlRatio  != null) s.minFeeActiveTvlRatio  = fresh.minFeeActiveTvlRatio;
     if (fresh.minOrganic     != null) s.minOrganic     = fresh.minOrganic;
     if (fresh.minHolders     != null) s.minHolders     = fresh.minHolders;
@@ -165,5 +165,7 @@ export function reloadScreeningThresholds() {
     if (fresh.athFilterPct      !== undefined) s.athFilterPct     = fresh.athFilterPct;
     if (fresh.maxBundlePct      != null) s.maxBundlePct     = fresh.maxBundlePct;
     if (fresh.maxBotHoldersPct  != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct;
+    if (fresh.maxPoolExposurePct != null) config.risk.maxPoolExposurePct = fresh.maxPoolExposurePct;
+    if (fresh.binsPerSol != null) config.strategy.binsPerSol = fresh.binsPerSol;
   } catch { /* ignore */ }
 }
