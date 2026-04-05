@@ -523,15 +523,20 @@ export async function runScreeningCycle({ silent = false } = {}) {
       await new Promise(r => setTimeout(r, 150)); // avoid 429s
     }
 
-    // ─── HARD SECURITY GATEKEEPER ────────────────────
+    // ─── HARD SECURITY GATEKEEPER (FAIL-CLOSED) ────────────────────
     const passing = allCandidates.filter(({ pool, ti, txr }) => {
-      // 1. Traxr Safety Filter
-      if (txr && txr.score !== undefined) {
-        log("security", `[TRAXR] ${pool.name} Safety Score: ${txr.score}/100`);
-        if (txr.score < (config.screening.minTraxrScore ?? 75) || txr.impact === 'HIGH' || txr.impact === 'CRITICAL') {
-          log("security", `❌ [REJECT] ${pool.name} - Low Safety Score (${txr.score} < ${config.screening.minTraxrScore ?? 75})`);
-          return false;
-        }
+      // 1. Traxr Safety Filter (FAIL-CLOSED)
+      if (!txr || txr.score === undefined) {
+        log("security", `❌ [REJECT] ${pool.name} - Traxr unavailable (Safety unverified)`);
+        return false;
+      }
+
+      log("security", `[TRAXR] ${pool.name} Safety Score: ${txr.score}/100`);
+      
+      const minScore = config.screening.minTraxrScore ?? 75;
+      if (txr.score < minScore || txr.impact === 'HIGH' || txr.impact === 'CRITICAL') {
+        log("security", `❌ [REJECT] ${pool.name} - Risky Score (${txr.score} < ${minScore}) or Impact: ${txr.impact}`);
+        return false;
       }
 
       // 2. Hard TVL Filter (Prevents hallucinations on small pools)
@@ -689,7 +694,7 @@ STEPS:
 
    Cycle finished with no valid entry.
 
-   BEST LOOKING CANDIDATE
+   BEST LOOKING CANDIDATES
    <name or none>
 
    WHY SKIPPED
@@ -1282,17 +1287,14 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
   log("startup", "Non-TTY mode — starting cron cycles immediately.");
   startCronJobs();
   maybeRunMissedBriefing().catch(() => { });
+
   (async () => {
     try {
-      const startupStep3 = process.env.DRY_RUN === "true"
-        ? `3. Ignore wallet SOL threshold in dry run: get_top_candidates then simulate deploy (cap at ${config.risk.maxPoolExposurePct * 100}% TVL or ${config.management.deployAmountSol} SOL).`
-        : `3. If SOL >= ${config.management.minSolToOpen}: get_top_candidates then deploy (cap at ${config.risk.maxPoolExposurePct * 100}% TVL or ${config.management.deployAmountSol} SOL).`;
-      await agentLoop(`
-STARTUP CHECK
-1. get_wallet_balance. 2. get_my_positions. ${startupStep3} 4. Report.
-      `, config.llm.maxSteps, [], "SCREENER");
+      log("startup", "Executing initial screening via hardened cycle...");
+      // UNIFIED STARTUP logic: ensures 1% Whale Protection and Traxr security from the first boot.
+      await runScreeningCycle({ silent: false });
     } catch (e) {
-      log("startup_error", e.message);
+      log("startup_error", `Startup screening failed: ${e.message}`);
     }
   })();
 }
