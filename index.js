@@ -277,16 +277,28 @@ export async function runManagementCycle({ silent = false } = {}) {
       if (securityMap.has(p.position)) {
         const sec = securityMap.get(p.position);
         actionMap.set(p.position, { action: "CLOSE", rule: "security", reason: sec.reason });
+        log("management", `Rule SECURITY: ${p.pair} — ${sec.reason}`);
+        if (telegramEnabled()) {
+          sendMessage(`🚨 SECURITY CLOSE\n${p.pair}\nReason: ${sec.reason}\nScore: ${sec.score || 'N/A'}`).catch(() => {});
+        }
         continue;
       }
+
       // 2. Hard exit from trailing TP
       if (exitMap.has(p.position)) {
-        actionMap.set(p.position, { action: "CLOSE", rule: "exit", reason: exitMap.get(p.position) });
+        const reason = exitMap.get(p.position);
+        actionMap.set(p.position, { action: "CLOSE", rule: "exit", reason });
+        log("management", `Rule TRAILING_TP: ${p.pair} — ${reason}`);
+        if (telegramEnabled()) {
+          sendMessage(`⚡ TRAILING TP CLOSE\n${p.pair}\n${reason}`).catch(() => {});
+        }
         continue;
       }
+
       // 3. Instruction-set
       if (p.instruction) {
         actionMap.set(p.position, { action: "INSTRUCTION" });
+        log("management", `Rule INSTRUCTION: ${p.pair} — holding with note`);
         continue;
       }
 
@@ -301,35 +313,78 @@ export async function runManagementCycle({ silent = false } = {}) {
         return false;
       })();
 
+      // Rule 1: Stop Loss
       if (!pnlSuspect && p.pnl_pct != null && p.pnl_pct <= config.management.stopLossPct) {
         actionMap.set(p.position, { action: "CLOSE", rule: 1, reason: "stop loss" });
+        log("management", `Rule 1 (STOP LOSS): ${p.pair} — PnL ${p.pnl_pct}% <= ${config.management.stopLossPct}%`);
+        if (telegramEnabled()) {
+          sendMessage(`🛑 STOP LOSS CLOSE\n${p.pair}\nPnL: ${p.pnl_pct}%`).catch(() => {});
+        }
         continue;
       }
+
+      // Rule 2: Take Profit
       if (!pnlSuspect && p.pnl_pct != null && p.pnl_pct >= config.management.takeProfitFeePct) {
         actionMap.set(p.position, { action: "CLOSE", rule: 2, reason: "take profit" });
+        log("management", `Rule 2 (TAKE PROFIT): ${p.pair} — PnL ${p.pnl_pct}% >= ${config.management.takeProfitFeePct}%`);
+        if (telegramEnabled()) {
+          sendMessage(`🎯 TAKE PROFIT CLOSE\n${p.pair}\nPnL: ${p.pnl_pct}%`).catch(() => {});
+        }
         continue;
       }
+
+      // Rule 3: Pumped far above range — only close if actually in profit
       if (p.active_bin != null && p.upper_bin != null &&
           p.active_bin > p.upper_bin + config.management.outOfRangeBinsToClose) {
-        actionMap.set(p.position, { action: "CLOSE", rule: 3, reason: "pumped far above range" });
+        const binsAbove = p.active_bin - p.upper_bin;
+        const pnlPct = p.pnl_pct ?? 0;
+
+        if (pnlPct > 0) {
+          actionMap.set(p.position, { action: "CLOSE", rule: 3, reason: `pumped far above range (+${binsAbove} bins) and in profit` });
+          log("management", `Rule 3 (UPSIDE PUMP + PROFIT): ${p.pair} — active bin ${p.active_bin} is +${binsAbove} above upper bin ${p.upper_bin} | PnL +${pnlPct.toFixed(2)}% → closing to lock profit`);
+          if (telegramEnabled()) {
+            sendMessage(`📈 UPSIDE PUMP CLOSE\n${p.pair}\n+${binsAbove} bins above range | PnL +${pnlPct.toFixed(2)}% → locked profit`).catch(() => {});
+          }
+        } else {
+          log("management", `Rule 3 (UPSIDE PUMP - HOLD): ${p.pair} — active bin ${p.active_bin} is +${binsAbove} above upper bin, but PnL ${pnlPct.toFixed(2)}% → holding (waiting for possible re-entry)`);
+        }
         continue;
       }
+
+      // Rule 4: Normal OOR timeout (downside or sideways)
       if (p.active_bin != null && p.upper_bin != null &&
           p.active_bin > p.upper_bin &&
           (p.minutes_out_of_range ?? 0) >= config.management.outOfRangeWaitMinutes) {
         actionMap.set(p.position, { action: "CLOSE", rule: 4, reason: "OOR" });
+        log("management", `Rule 4 (OOR TIMEOUT): ${p.pair} — OOR for ${p.minutes_out_of_range} minutes`);
+        if (telegramEnabled()) {
+          sendMessage(`⏰ OOR TIMEOUT CLOSE\n${p.pair}\nOOR for ${p.minutes_out_of_range} minutes`).catch(() => {});
+        }
         continue;
       }
+
+      // Rule 5: Low yield
       if (p.fee_per_tvl_24h != null &&
           p.fee_per_tvl_24h < config.management.minFeePerTvl24h &&
           (p.age_minutes ?? 0) >= 60) {
         actionMap.set(p.position, { action: "CLOSE", rule: 5, reason: "low yield" });
+        log("management", `Rule 5 (LOW YIELD): ${p.pair} — fee/TVL ${p.fee_per_tvl_24h}% < ${config.management.minFeePerTvl24h}%`);
+        if (telegramEnabled()) {
+          sendMessage(`📉 LOW YIELD CLOSE\n${p.pair}\nfee/TVL ${p.fee_per_tvl_24h}%`).catch(() => {});
+        }
         continue;
       }
+
+      // Rule 6: Claim fees
       if ((p.unclaimed_fees_usd ?? 0) >= config.management.minClaimAmount) {
         actionMap.set(p.position, { action: "CLAIM" });
+        log("management", `Rule CLAIM: ${p.pair} — unclaimed fees $${p.unclaimed_fees_usd.toFixed(2)}`);
+        if (telegramEnabled()) {
+          sendMessage(`💰 CLAIM FEES\n${p.pair}\nUnclaimed: $${p.unclaimed_fees_usd.toFixed(2)}`).catch(() => {});
+        }
         continue;
       }
+
       actionMap.set(p.position, { action: "STAY" });
     }
 
