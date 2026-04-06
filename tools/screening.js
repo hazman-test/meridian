@@ -25,9 +25,6 @@ export async function discoverPools({
   const activeCategory = category || s.category;
 
   const filters = [
-    "base_token_has_critical_warnings=false",
-    "quote_token_has_critical_warnings=false",
-    "base_token_has_high_single_ownership=false",
     "pool_type=dlmm",
     `base_token_market_cap>=${s.minMcap}`,
     `base_token_market_cap<=${s.maxMcap}`,
@@ -50,8 +47,10 @@ export async function discoverPools({
     `&timeframe=${activeTimeframe}` + 
     `&category=${activeCategory}`;
 
+  // ──── VERBOSE LOGGING ────
   log("screening", `Meteora API Request URL: ${url}`);
   log("screening", `Meteora Filters String: ${filters}`);
+  // ────────────────────────
 
   const res = await fetch(url);
 
