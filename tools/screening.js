@@ -39,7 +39,7 @@ export async function discoverPools({
     `dlmm_bin_step<=${s.maxBinStep}`,
     `fee_active_tvl_ratio>=${s.minFeeActiveTvlRatio}`,
     `base_token_organic_score>=${s.minOrganic}`,
-    "quote_token_organic_score>=60",
+    "quote_token_organic_score>=0",
     s.minTokenAgeHours != null ? `base_token_created_at<=${Date.now() - s.minTokenAgeHours * 3_600_000}` : null,
     s.maxTokenAgeHours != null ? `base_token_created_at>=${Date.now() - s.maxTokenAgeHours * 3_600_000}` : null,
   ].filter(Boolean).join("&&");
@@ -49,6 +49,9 @@ export async function discoverPools({
     `&filter_by=${encodeURIComponent(filters)}` +
     `&timeframe=${activeTimeframe}` + 
     `&category=${activeCategory}`;
+
+  log("screening", `Meteora API Request URL: ${url}`);
+  log("screening", `Meteora Filters String: ${filters}`);
 
   const res = await fetch(url);
 
