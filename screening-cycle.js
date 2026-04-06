@@ -262,9 +262,6 @@ STEPS:
 4. If no pool qualifies, report: ⛔ NO DEPLOY
       `;
 
-    // Log the prompt for debugging
-    log("llm_prompt", `\n--- START LLM PROMPT ---\n${prompt}\n--- END LLM PROMPT ---\n`);
-
     const { content } = await agentLoop(prompt, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048, {
         onToolStart: async ({ name }) => { await liveMessage?.toolStart(name); },
         onToolFinish: async ({ name, result, success }) => { await liveMessage?.toolFinish(name, result, success); },
