@@ -1,0 +1,18 @@
+cat <<EOF > lessons.json
+{
+  "lessons": [
+    {
+      "id": 0,
+      "rule": "System initialized with clean slate",
+      "tags": ["system"],
+      "outcome": "neutral",
+      "context": "Initial setup",
+      "pnl_pct": 0,
+      "range_efficiency": 0,
+      "pool": "0x0000000000000000000000000000000000000000",
+      "created_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    }
+  ],
+  "performance": []
+}
+EOF
