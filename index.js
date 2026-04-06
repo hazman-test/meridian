@@ -560,6 +560,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
 
     const allCandidates = [];
     for (const pool of candidates) {
+      log("screening", `🔍 Enriching candidate ${allCandidates.length + 1}/${candidates.length}: ${pool.name}`);
       const mint = pool.base?.mint;
       const [smartWallets, narrative, tokenInfo, traxrData] = await Promise.allSettled([
         checkSmartWalletsOnPool({ pool_address: pool.pool }),
