@@ -30,14 +30,19 @@ function sanitizeLessonText(text, maxLen = MAX_MANUAL_LESSON_LENGTH) {
   return cleaned || null;
 }
 
+// meridian-main/lessons.js
+
 function load() {
+  const defaultData = { lessons: [], performance: [] };
   if (!fs.existsSync(LESSONS_FILE)) {
-    return { lessons: [], performance: [] };
+    return defaultData;
   }
   try {
-    return JSON.parse(fs.readFileSync(LESSONS_FILE, "utf8"));
+    const data = JSON.parse(fs.readFileSync(LESSONS_FILE, "utf8"));
+    // Use the spread operator to merge existing data with defaults
+    return { ...defaultData, ...data };
   } catch {
-    return { lessons: [], performance: [] };
+    return defaultData;
   }
 }
 
