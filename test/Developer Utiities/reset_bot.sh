@@ -59,3 +59,4 @@ EOF
 }
 EOF
 rm pool-memory.json
+./reset_bot.sh
