@@ -4,6 +4,7 @@ import { isBlacklisted } from "../token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
 import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
+import { sendMessage, isEnabled as telegramEnabled } from "../telegram.js";
 
 const DATAPI_JUP = "https://datapi.jup.ag/v1";
 
@@ -15,8 +16,15 @@ const POOL_DISCOVERY_BASE = "https://pool-discovery-api.datapi.meteora.ag";
  */
 export async function discoverPools({
   page_size = 50,
+  timeframe = null, // Added to allow overrides for testing
+  category = null   // Added to allow overrides for testing
 } = {}) {
   const s = config.screening;
+
+  // Use passed values OR fall back to config defaults
+  const activeTimeframe = timeframe || s.timeframe;
+  const activeCategory = category || s.category;
+
   const filters = [
     "base_token_has_critical_warnings=false",
     "quote_token_has_critical_warnings=false",
@@ -40,8 +48,8 @@ export async function discoverPools({
   const url = `${POOL_DISCOVERY_BASE}/pools?` +
     `page_size=${page_size}` +
     `&filter_by=${encodeURIComponent(filters)}` +
-    `&timeframe=${s.timeframe}` +
-    `&category=${s.category}`;
+    `&timeframe=${activeTimeframe}` + // Uses the resolved timeframe
+    `&category=${activeCategory}`;    // Uses the resolved category
 
   const res = await fetch(url);
 
@@ -124,14 +132,23 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const eligible = pools
     .filter((p) => {
       if (occupiedPools.has(p.pool) || occupiedMints.has(p.base?.mint)) return false;
+      
+      // Persistent Pool Cooldown Check
       if (isPoolOnCooldown(p.pool)) {
-        log("screening", `Filtered cooldown pool ${p.name} (${p.pool.slice(0, 8)})`);
+        const msg = `❄️ Skipping cooldown pool: ${p.name} (${p.pool.slice(0, 8)})\nTo stop skipping, edit or delete pool-memory.json.`;
+        log("screening", msg);
+        if (telegramEnabled()) sendMessage(msg).catch(() => {});
         return false;
       }
+      
+      // Persistent Token Cooldown Check
       if (isBaseMintOnCooldown(p.base?.mint)) {
-        log("screening", `Filtered cooldown token ${p.base?.symbol} (${p.base?.mint?.slice(0, 8)})`);
+        const msg = `❄️ Skipping cooldown token: ${p.base?.symbol} (${p.base?.mint?.slice(0, 8)})\nTo stop skipping, edit or delete pool-memory.json.`;
+        log("screening", msg);
+        if (telegramEnabled()) sendMessage(msg).catch(() => {});
         return false;
       }
+      
       return true;
     })
     .slice(0, limit);
@@ -231,7 +248,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
 
         const mint = p.base.mint;
 
-        // Check cooldown
+        // Check in-memory cooldown
         if (global.recentlyRejected.has(mint)) {
           const lastReject = global.recentlyRejected.get(mint);
           if (now - lastReject < 5 * 60 * 1000) {  // 5 minutes cooldown
@@ -269,7 +286,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       const { score, passed, error, warning } = res.value;
 
       if (!passed) {
-        // Hard reject + add to cooldown
+        // Hard reject + add to in-memory cooldown
         global.recentlyRejected.set(p.base.mint, now);
         log("security", `❌ [REJECT] ${p.name || p.base?.symbol}-SOL - Risky Score (${score} < ${threshold})`);
         return false;
@@ -312,8 +329,6 @@ export async function getTopCandidates({ limit = 10 } = {}) {
 
 /**
  * Get full raw details for a specific pool.
- * Fetches top 50 pools from discovery API and finds the matching address.
- * Returns the full unfiltered API object (all fields, not condensed).
  */
 export async function getPoolDetail({ pool_address, timeframe = "5m" }) {
   const url = `${POOL_DISCOVERY_BASE}/pools?` +
@@ -339,7 +354,6 @@ export async function getPoolDetail({ pool_address, timeframe = "5m" }) {
 
 /**
  * Condense a pool object for LLM consumption.
- * Raw API returns ~100+ fields per pool. The LLM only needs ~20.
  */
 function condensePool(p) {
   return {
@@ -359,17 +373,14 @@ function condensePool(p) {
     bin_step: p.dlmm_params?.bin_step || null,
     fee_pct: p.fee_pct,
 
-    // Core metrics (the numbers that matter)
     active_tvl: round(p.active_tvl),
     fee_window: round(p.fee),
     volume_window: round(p.volume),
-    // API sometimes returns 0 for fee_active_tvl_ratio on short timeframes — compute from raw values as fallback
     fee_active_tvl_ratio: p.fee_active_tvl_ratio > 0
       ? fix(p.fee_active_tvl_ratio, 4)
       : (p.active_tvl > 0 ? fix((p.fee / p.active_tvl) * 100, 4) : 0),
     volatility: fix(p.volatility, 2),
 
-    // Token health
     holders: p.base_token_holders,
     mcap: round(p.token_x?.market_cap),
     organic_score: Math.round(p.token_x?.organic_score || 0),
@@ -378,19 +389,16 @@ function condensePool(p) {
       : null,
     dev: p.token_x?.dev || null,
 
-    // Position health
     active_positions: p.active_positions,
     active_pct: fix(p.active_positions_pct, 1),
     open_positions: p.open_positions,
 
-    // Price action
     price: p.pool_price,
     price_change_pct: fix(p.pool_price_change_pct, 1),
     price_trend: p.price_trend,
     min_price: p.min_price,
     max_price: p.max_price,
 
-    // Activity trends
     volume_change_pct: fix(p.volume_change_pct, 1),
     fee_change_pct: fix(p.fee_change_pct, 1),
     swap_count: p.swap_count,
