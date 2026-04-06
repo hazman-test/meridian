@@ -16,3 +16,4 @@ cat <<EOF > lessons.json
   "performance": []
 }
 EOF
+rm pool-memory.json
