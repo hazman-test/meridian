@@ -219,35 +219,33 @@ export async function runManagementCycle({ silent = false } = {}) {
       return { ...p, recall: recallForPool(p.pool) };
     });
 
+    // ── SECURITY SCAN & SCORE CAPTURE ───────────────────────────────
     const securityMap = new Map();
     for (const p of positionData) {
       try {
         const txr = await traxr.getPoolScore(p.base_mint, config.tokens.SOL);
         if (txr && txr.score !== undefined) {
-          // Use the new configurable threshold for active positions
+          // Always capture the score for reporting
+          securityMap.set(p.position, { score: txr.score });
+
           const minScoreToKeep = config.screening.minTraxrScoreToKeepRunning ?? 55;
-          
           if (txr.score < minScoreToKeep || txr.impact === 'CRITICAL') {
             log("security", `🚨 [EMERGENCY EXIT] ${p.pair} security compromised! Score: ${txr.score}/100`);
-            securityMap.set(p.position, { reason: `security score dropped to ${txr.score}`, score: txr.score });
+            securityMap.set(p.position, { 
+              reason: `security score dropped to ${txr.score}`, 
+              score: txr.score,
+              triggerExit: true 
+            });
           }
         }
       } catch (e) {
         log("security_error", `Failed to re-scan ${p.pair}: ${e.message}`);
-        
-        // Alert if API fails AND position is running a loss
         if (p.pnl_pct != null && p.pnl_pct < 0) {
-            const lossMsg = `⚠️ [SECURITY WARNING]\nTraxr API call failed for **${p.pair}**.\n` +
-                            `Current PnL: ${p.pnl_pct}%\n` +
-                            `Security status is UNKNOWN while in loss. Manual check recommended!`;
-            
-            if (telegramEnabled()) {
-                sendMessage(lossMsg).catch(() => {});
-            }
+            const lossMsg = `⚠️ [SECURITY WARNING]\nTraxr API call failed for **${p.pair}**.\nCurrent PnL: ${p.pnl_pct}%\nSecurity status is UNKNOWN while in loss. Manual check recommended!`;
+            if (telegramEnabled()) sendMessage(lossMsg).catch(() => {});
         }
       }
     }
-    // ────────────────────────────────────────────────────────────────
 
     // JS trailing TP check
     const exitMap = new Map();
@@ -265,13 +263,14 @@ export async function runManagementCycle({ silent = false } = {}) {
     // ── Deterministic rule checks (no LLM) ──────────────────────────
     const actionMap = new Map();
     for (const p of positionData) {
+      const secData = securityMap.get(p.position);
+
       // 1. Security Exit (Highest Priority)
-      if (securityMap.has(p.position)) {
-        const sec = securityMap.get(p.position);
-        actionMap.set(p.position, { action: "CLOSE", rule: "security", reason: sec.reason });
-        log("management", `Rule SECURITY: ${p.pair} — ${sec.reason}`);
+      if (secData?.triggerExit) {
+        actionMap.set(p.position, { action: "CLOSE", rule: "security", reason: secData.reason });
+        log("management", `Rule SECURITY: ${p.pair} — ${secData.reason}`);
         if (telegramEnabled()) {
-          sendMessage(`🚨 SECURITY CLOSE\n${p.pair}\nReason: ${sec.reason}\nScore: ${sec.score || 'N/A'}`).catch(() => {});
+          sendMessage(`🚨 SECURITY CLOSE\n${p.pair}\nReason: ${secData.reason}\nScore: ${secData.score || 'N/A'}`).catch(() => {});
         }
         continue;
       }
@@ -325,12 +324,11 @@ export async function runManagementCycle({ silent = false } = {}) {
         continue;
       }
 
-      // Rule 3: Pumped far above range — only close if actually in profit
+      // Rule 3: Pumped OOR + Profit
       if (p.active_bin != null && p.upper_bin != null &&
           p.active_bin > p.upper_bin + config.management.outOfRangeBinsToClose) {
         const binsAbove = p.active_bin - p.upper_bin;
         const pnlPct = p.pnl_pct ?? 0;
-
         if (pnlPct > 0) {
           actionMap.set(p.position, { action: "CLOSE", rule: 3, reason: `pumped far above range (+${binsAbove} bins) and in profit` });
           log("management", `Rule 3 (UPSIDE PUMP + PROFIT): ${p.pair} — active bin ${p.active_bin} is +${binsAbove} above upper bin ${p.upper_bin} | PnL +${pnlPct.toFixed(2)}% → closing to lock profit`);
@@ -343,7 +341,7 @@ export async function runManagementCycle({ silent = false } = {}) {
         continue;
       }
 
-      // Rule 4: Normal OOR timeout (downside or sideways)
+      // Rule 4: Normal OOR timeout
       if (p.active_bin != null && p.upper_bin != null &&
           p.active_bin > p.upper_bin &&
           (p.minutes_out_of_range ?? 0) >= config.management.outOfRangeWaitMinutes) {
@@ -386,11 +384,15 @@ export async function runManagementCycle({ silent = false } = {}) {
 
     const reportLines = positionData.map((p) => {
       const act = actionMap.get(p.position);
+      const secData = securityMap.get(p.position);
+      const traxrScoreStr = secData?.score ? ` | Traxr: ${secData.score}` : "";
+
       const inRange = p.in_range ? "🟢 IN" : `🔴 OOR ${p.minutes_out_of_range ?? 0}m`;
       const val = config.management.solMode ? `◎${p.total_value_usd ?? "?"}` : `$${p.total_value_usd ?? "?"}`;
       const unclaimed = config.management.solMode ? `◎${p.unclaimed_fees_usd ?? "?"}` : `$${p.unclaimed_fees_usd ?? "?"}`;
       const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
-      let line = `**${p.pair}** | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}% | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
+      
+      let line = `**${p.pair}**${traxrScoreStr} | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}% | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
       if (p.instruction) line += `\nNote: "${p.instruction}"`;
       if (act.action === "CLOSE" && act.rule === "security") line += `\n🚨 Security: ${act.reason}`;
       if (act.action === "CLOSE" && act.rule === "exit") line += `\n⚡ Trailing TP: ${act.reason}`;
@@ -419,9 +421,11 @@ export async function runManagementCycle({ silent = false } = {}) {
 
       const actionBlocks = actionPositions.map((p) => {
         const act = actionMap.get(p.position);
+        const secData = securityMap.get(p.position);
         return [
           `POSITION: ${p.pair} (${p.position})`,
           `  pool: ${p.pool}`,
+          `  security: Traxr Score=${secData?.score ?? "N/A"}/100`,
           `  action: ${act.action}${act.rule && act.rule !== "exit" ? ` — Rule ${act.rule}: ${act.reason}` : ""}${act.rule === "exit" ? ` — ⚡ Trailing TP: ${act.reason}` : ""}`,
           `  pnl_pct: ${p.pnl_pct}% | unclaimed_fees: ${cur}${p.unclaimed_fees_usd} | value: ${cur}${p.total_value_usd} | fee_per_tvl_24h: ${p.fee_per_tvl_24h ?? "?"}%`,
           `  bins: lower=${p.lower_bin} upper=${p.upper_bin} active=${p.active_bin} | oor_minutes: ${p.minutes_out_of_range ?? 0}`,
@@ -456,14 +460,12 @@ After executing, write a brief one-line result per position.
 
     _managementCyclesCompleted++; 
     
-    // Check for Delayed Learning
     if (config.schedule.learningIntervalHours && !_hasInitialLearnStarted && _managementCyclesCompleted >= 5) {
       log("startup", `Management cycle threshold (5) hit. Starting first learn cycle.`);
       _hasInitialLearnStarted = true;
       runLearningCycle().catch((e) => log("cron_error", `Startup learn failed: ${e.message}`));
     }
 
-    // Check for Delayed Evolution
     if (config.schedule.evolutionIntervalHours && !_hasInitialEvolveStarted && _managementCyclesCompleted >= 5) {
         log("startup", `Management cycle threshold (5) hit. Starting first automated evolution cycle.`);
         _hasInitialEvolveStarted = true;
@@ -711,7 +713,7 @@ if (isTTY) {
       console.log("Open positions:");
       for (const p of positions.positions) {
         const status = p.in_range ? "in-range ✓" : "OUT OF RANGE ⚠";
-        console.log(`  ${p.pair.padEnd(16)} ${status}  fees: $${p.unclaimed_fees_usd}`);
+        console.log(`  ${p.pair.padEnd(16)} ${status} [Traxr: ${p.traxr_safety_score ?? "?"}] fees: $${p.unclaimed_fees_usd}`);
       }
       console.log();
     }
@@ -769,8 +771,7 @@ if (isTTY) {
           const pnl = p.pnl_usd >= 0 ? `+${cur}${p.pnl_usd}` : `-${cur}${Math.abs(p.pnl_usd)}`;
           const age = p.age_minutes != null ? `${p.age_minutes}m` : "?";
           const oor = !p.in_range ? " ⚠️OOR" : "";
-          return `${i + 1}. ${p.pair} | ${cur}${p.total_value_usd} | PnL: ${pnl} | fees: ${cur}${p.unclaimed_fees_usd} | ${age}${oor}`;
-        });
+        return `${i + 1}. ${p.pair} (Traxr: ${p.traxr_safety_score ?? "?"}) | ${cur}${p.total_value_usd} | PnL: ${pnl} | fees: ${cur}${p.unclaimed_fees_usd} | ${age}${oor}`;        });
         await sendMessage(`📊 Open Positions (${total_positions}):\n\n${lines.join("\n")}\n\n/close <n> to close | /set <n> <note> to set instruction`);
       } catch (e) { await sendMessage(`Error: ${e.message}`).catch(() => { }); }
       return;
