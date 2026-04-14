@@ -3,6 +3,7 @@ import { isBlacklisted } from "../token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
 import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
+import { confirmIndicatorPreset } from "./chart-indicators.js";
 
 const DATAPI_JUP = "https://datapi.jup.ag/v1";
 
@@ -23,6 +24,15 @@ function scoreCandidate(pool) {
   const volume = Number(pool.volume_window || 0);
   const holders = Number(pool.holders || 0);
   return feeTvl * 1000 + organic * 10 + volume / 100 + holders / 100;
+}
+
+async function fetchDiscordSignalCandidates() {
+  const res = await fetch(`${config.api.url}/signals/discord/candidates`, {
+    headers: config.api.publicApiKey ? { "x-api-key": config.api.publicApiKey } : {},
+  });
+  if (!res.ok) throw new Error(`discord signal candidates ${res.status}`);
+  const data = await res.json();
+  return Array.isArray(data?.candidates) ? data.candidates : [];
 }
 
 async function searchAssetsBySymbol(symbol) {
@@ -123,13 +133,24 @@ export async function discoverPools({
       : null,
   ].filter(Boolean).join("&&");
 
-  const url = `${POOL_DISCOVERY_BASE}/pools?` +
-    `page_size=${page_size}` +
-    `&filter_by=${encodeURIComponent(filters)}` +
-    `&timeframe=${s.timeframe}` +
-    `&category=${s.category}`;
+  const useServerDiscovery = !!config.api.publicApiKey;
+  const url = useServerDiscovery
+    ? `${config.api.url}/discovery/pools?` +
+      `page_size=${page_size}` +
+      `&filter_by=${encodeURIComponent(filters)}` +
+      `&timeframe=${s.timeframe}` +
+      `&category=${s.category}`
+    : `${POOL_DISCOVERY_BASE}/pools?` +
+      `page_size=${page_size}` +
+      `&filter_by=${encodeURIComponent(filters)}` +
+      `&timeframe=${s.timeframe}` +
+      `&category=${s.category}`;
 
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: useServerDiscovery && config.api.publicApiKey
+      ? { "x-api-key": config.api.publicApiKey }
+      : {},
+  });
 
   if (!res.ok) {
     throw new Error(`Pool Discovery API error: ${res.status} ${res.statusText}`);
@@ -137,7 +158,51 @@ export async function discoverPools({
 
   const data = await res.json();
 
-  const condensed = (data.data || []).map(condensePool);
+  let rawPools = Array.isArray(data.data) ? data.data : [];
+
+  if (config.screening.useDiscordSignals) {
+    const signalCandidates = await fetchDiscordSignalCandidates().catch((error) => {
+      log("screening", `Discord signal fetch failed: ${error.message}`);
+      return [];
+    });
+    const signalPools = signalCandidates
+      .map((candidate) => {
+        const discoveryPool = candidate.discovery_pool;
+        if (!discoveryPool?.pool_address) return null;
+        return {
+          ...discoveryPool,
+          discord_signal: true,
+          discord_signal_count: candidate.source_count || 1,
+          discord_signal_seen_count: candidate.seen_count || 1,
+          discord_signal_first_seen_at: candidate.first_seen_at || null,
+          discord_signal_last_seen_at: candidate.last_seen_at || null,
+        };
+      })
+      .filter(Boolean);
+
+    if (config.screening.discordSignalMode === "only") {
+      rawPools = signalPools;
+    } else if (signalPools.length > 0) {
+      const byPool = new Map(rawPools.map((pool) => [pool.pool_address, pool]));
+      for (const signalPool of signalPools) {
+        if (byPool.has(signalPool.pool_address)) {
+          byPool.set(signalPool.pool_address, {
+            ...byPool.get(signalPool.pool_address),
+            discord_signal: true,
+            discord_signal_count: signalPool.discord_signal_count,
+            discord_signal_seen_count: signalPool.discord_signal_seen_count,
+            discord_signal_first_seen_at: signalPool.discord_signal_first_seen_at,
+            discord_signal_last_seen_at: signalPool.discord_signal_last_seen_at,
+          });
+        } else {
+          byPool.set(signalPool.pool_address, signalPool);
+        }
+      }
+      rawPools = Array.from(byPool.values());
+    }
+  }
+
+  const condensed = rawPools.map(condensePool);
 
   // Hard-filter blacklisted tokens and blocked deployers (what pool discovery already gave us)
   let pools = condensed.filter((p) => {
@@ -231,6 +296,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       }
       return true;
     })
+    .sort((a, b) => scoreCandidate(b) - scoreCandidate(a))
     .slice(0, limit);
 
   if (config.screening.avoidPvpSymbols && eligible.length > 0) {
@@ -344,6 +410,45 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     if (eligible.length < before) log("dev_blocklist", `Filtered ${before - eligible.length} pool(s) via OKX creator check`);
   }
 
+  if (config.indicators.enabled && eligible.length > 0) {
+    const confirmations = await Promise.all(
+      eligible.map(async (pool) => {
+        try {
+          const confirmation = await confirmIndicatorPreset({
+            mint: pool.base?.mint,
+            side: "entry",
+          });
+          return { pool: pool.pool, confirmation };
+        } catch (error) {
+          return {
+            pool: pool.pool,
+            confirmation: {
+              enabled: true,
+              confirmed: true,
+              skipped: true,
+              reason: `Indicator confirmation unavailable: ${error.message}`,
+              intervals: [],
+            },
+          };
+        }
+      }),
+    );
+    const confirmationByPool = new Map(confirmations.map((entry) => [entry.pool, entry.confirmation]));
+    const before = eligible.length;
+    const confirmedEligible = eligible.filter((pool) => {
+      const confirmation = confirmationByPool.get(pool.pool);
+      pool.indicator_confirmation = confirmation || null;
+      if (!confirmation || confirmation.confirmed) return true;
+      pushFilteredReason(filteredOut, pool, `indicator reject: ${confirmation.reason}`);
+      log("screening", `Indicator rejected ${pool.name} (${pool.pool.slice(0, 8)}): ${confirmation.reason}`);
+      return false;
+    });
+    eligible.splice(0, eligible.length, ...confirmedEligible);
+    if (eligible.length < before) {
+      log("screening", `Indicator confirmation removed ${before - eligible.length} candidate(s)`);
+    }
+  }
+
   return {
     candidates: eligible,
     total_screened: pools.length,
@@ -357,19 +462,26 @@ export async function getTopCandidates({ limit = 10 } = {}) {
  * Returns the full unfiltered API object (all fields, not condensed).
  */
 export async function getPoolDetail({ pool_address, timeframe = "5m" }) {
-  const url = `${POOL_DISCOVERY_BASE}/pools?` +
-    `page_size=1` +
-    `&filter_by=${encodeURIComponent(`pool_address=${pool_address}`)}` +
-    `&timeframe=${timeframe}`;
+  const useServerDiscovery = !!config.api.publicApiKey;
+  const url = useServerDiscovery
+    ? `${config.api.url}/discovery/pools/${pool_address}?timeframe=${encodeURIComponent(timeframe)}`
+    : `${POOL_DISCOVERY_BASE}/pools?` +
+      `page_size=1` +
+      `&filter_by=${encodeURIComponent(`pool_address=${pool_address}`)}` +
+      `&timeframe=${timeframe}`;
 
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: useServerDiscovery && config.api.publicApiKey
+      ? { "x-api-key": config.api.publicApiKey }
+      : {},
+  });
 
   if (!res.ok) {
     throw new Error(`Pool detail API error: ${res.status} ${res.statusText}`);
   }
 
   const data = await res.json();
-  const pool = (data.data || [])[0];
+  const pool = useServerDiscovery ? data : (data.data || [])[0];
 
   if (!pool) {
     throw new Error(`Pool ${pool_address} not found`);
@@ -424,6 +536,10 @@ function condensePool(p) {
     active_positions: p.active_positions,
     active_pct: fix(p.active_positions_pct, 1),
     open_positions: p.open_positions,
+    discord_signal: Boolean(p.discord_signal),
+    discord_signal_count: p.discord_signal_count || 0,
+    discord_signal_seen_count: p.discord_signal_seen_count || 0,
+    discord_signal_last_seen_at: p.discord_signal_last_seen_at || null,
 
     // Price action
     price: p.pool_price,
